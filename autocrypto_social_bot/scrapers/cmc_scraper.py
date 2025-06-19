@@ -1,10 +1,13 @@
+import time
+import logging
+from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from utils.helpers import random_delay
-import logging
-import time
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
+from autocrypto_social_bot.utils.helpers import random_delay
 
 class CMCScraper:
     def __init__(self, driver=None):
@@ -356,143 +359,248 @@ class CMCScraper:
         """Smart AI button detection that looks for AI question prompts"""
         self.logger.info("🔍 Looking for AI question prompts...")
         
-        # Strategy 1: Look for CMC AI section first, then find questions
+        # Strategy 1: Look for elements near the price section first
         try:
-            # Find CMC AI section
-            cmc_ai_section = None
-            section_patterns = [
-                "//*[contains(text(), 'CMC AI')]",
-                "//div[contains(., 'CMC AI') and not(contains(@class, 'button'))]",
-                "//span[contains(text(), 'CMC AI')]",
-                "//h2[contains(text(), 'CMC AI')]",
-                "//h3[contains(text(), 'CMC AI')]"
-            ]
+            # Find the price value element
+            price_elements = driver.find_elements(By.CSS_SELECTOR, 
+                '[data-testid="price-value"], .priceValue, [class*="price"]')
             
-            for pattern in section_patterns:
-                try:
-                    elements = driver.find_elements(By.XPATH, pattern)
-                    for elem in elements:
-                        if elem.is_displayed() and elem.text.strip() == "CMC AI":
-                            cmc_ai_section = elem
-                            self.logger.info("✅ Found CMC AI section")
-                            break
-                    if cmc_ai_section:
-                        break
-                except:
+            for price_elem in price_elements:
+                if not price_elem.is_displayed():
                     continue
-            
-            # If we found CMC AI section, look for questions nearby
-            if cmc_ai_section:
-                # Look for question elements in the parent/sibling elements
-                parent = cmc_ai_section.find_element(By.XPATH, "./..")
-                
-                # Search for clickable questions
-                question_selectors = [
-                    ".//div[contains(@class, 'question')]",
-                    ".//button[contains(., '?')]",
-                    ".//div[contains(., '?') and @role='button']",
-                    ".//div[contains(., 'Why')]",
-                    ".//div[contains(., 'What')]",
-                    ".//div[contains(., 'price')]",
-                    ".//div[contains(., 'affect')]",
-                    ".//span[contains(., '?')]",
-                    ".//*[contains(text(), '?')]"
-                ]
-                
-                for selector in question_selectors:
-                    try:
-                        questions = parent.find_elements(By.XPATH, selector)
-                        for q in questions:
-                            # Check if it's a question (contains ?)
-                            if "?" in q.text and q.is_displayed() and q.is_enabled():
-                                self.logger.info(f"✅ Found AI question: '{q.text}'")
-                                return q
-                    except:
-                        continue
-        except Exception as e:
-            self.logger.debug(f"CMC AI section search failed: {str(e)}")
-        
-        # Strategy 2: Direct search for question patterns
-        question_patterns = [
-            "Why is",
-            "What could affect",
-            "What are people saying",
-            "How does",
-            "What is the",
-            "Will the price"
-        ]
-        
-        for pattern in question_patterns:
-            try:
-                # Search for elements containing these question starts
-                elements = driver.find_elements(By.XPATH, 
-                    f"//*[contains(text(), '{pattern}') and contains(text(), '?')]")
-                
-                for element in elements:
-                    # Verify it's clickable
-                    if element.is_displayed() and element.is_enabled():
-                        # Check if it's near CMC AI text
-                        try:
-                            # Check if CMC AI is within 500 pixels
-                            cmc_nearby = driver.find_elements(By.XPATH, 
-                                "//*[contains(text(), 'CMC AI')]")
-                            for cmc in cmc_nearby:
-                                if cmc.is_displayed():
-                                    distance = abs(element.location['y'] - cmc.location['y'])
-                                    if distance < 500:  # Within reasonable distance
-                                        self.logger.info(f"✅ Found AI question prompt: '{element.text}'")
-                                        return element
-                        except:
-                            # If we can't check distance, still return if it looks like a question
-                            if len(element.text) > 10 and element.text.endswith("?"):
-                                self.logger.info(f"✅ Found potential AI question: '{element.text}'")
-                                return element
-            except Exception as e:
-                self.logger.debug(f"Question pattern '{pattern}' search failed: {str(e)}")
-        
-        # Strategy 3: Look for any clickable element with a question mark near CMC AI
-        try:
-            # Find all elements with question marks
-            question_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '?')]")
-            
-            for elem in question_elements:
+                    
+                # Look for questions in the same general area
                 try:
-                    # Check if it's displayed and has reasonable length (not just "?")
-                    if (elem.is_displayed() and 
-                        elem.is_enabled() and 
-                        len(elem.text) > 15 and 
-                        elem.text.count('?') == 1):  # Exactly one question mark
-                        
-                        # Check tag type - prefer divs, buttons, spans
-                        tag = elem.tag_name.lower()
-                        if tag in ['div', 'button', 'span', 'a']:
-                            self.logger.info(f"✅ Found clickable question: '{elem.text}'")
-                            return elem
+                    # Get common ancestor and look for questions
+                    ancestor = price_elem.find_element(By.XPATH, "./ancestor::div[4]")  # Go up 4 levels
+                    questions = ancestor.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
+                    
+                    for q in questions:
+                        text = q.text.strip()
+                        # Filter out unwanted questions and verify it's a proper AI question
+                        if (q.is_displayed() and 
+                            q.is_enabled() and 
+                            len(text) > 10 and
+                            text.count('?') == 1 and
+                            not any(unwanted in text.lower() for unwanted in [
+                                "do you own", "forgot", "need help", "what is", "have you seen"
+                            ]) and
+                            any(word in text.lower() for word in [
+                                "why is", "what could", "how does", "will the"
+                            ])):
+                            self.logger.info(f"✅ Found AI question near price: '{text}'")
+                            return q
                 except:
                     continue
         except Exception as e:
-            self.logger.debug(f"General question search failed: {str(e)}")
+            self.logger.debug(f"Price proximity search failed: {str(e)}")
         
-        # Strategy 4: Look for elements with specific CSS that might indicate AI questions
+        # Strategy 2: Look for elements with AI-specific classes
         css_selectors = [
             "[class*='ai-question']",
             "[class*='ai-prompt']",
-            "[class*='question']",
-            "[data-testid*='question']",
-            "[role='button'][class*='ai']"
+            "[data-testid*='ai']",
+            "[class*='ai-button']"
         ]
         
         for css in css_selectors:
             try:
                 elements = driver.find_elements(By.CSS_SELECTOR, css)
                 for elem in elements:
-                    if elem.is_displayed() and "?" in elem.text:
-                        self.logger.info(f"✅ Found AI question by CSS: '{elem.text}'")
+                    text = elem.text.strip()
+                    if (elem.is_displayed() and 
+                        elem.is_enabled() and 
+                        "?" in text and
+                        len(text) > 10 and
+                        not "do you own" in text.lower()):
+                        self.logger.info(f"✅ Found AI question by class: '{text}'")
                         return elem
             except:
                 continue
         
+        # Strategy 3: Look for questions near "CMC AI" text
+        try:
+            # Find CMC AI text elements
+            ai_elements = driver.find_elements(By.XPATH, "//*[contains(text(), 'CMC AI')]")
+            
+            for ai_elem in ai_elements:
+                if not ai_elem.is_displayed():
+                    continue
+                    
+                # Look for questions in siblings and nearby elements
+                try:
+                    # Look in siblings first
+                    parent = ai_elem.find_element(By.XPATH, "./..")
+                    questions = parent.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
+                    
+                    for q in questions:
+                        text = q.text.strip()
+                        if (q.is_displayed() and 
+                            q.is_enabled() and 
+                            len(text) > 10 and
+                            text.count('?') == 1 and
+                            not "do you own" in text.lower()):
+                            self.logger.info(f"✅ Found question near CMC AI: '{text}'")
+                            return q
+                            
+                    # If not found in siblings, look in nearby elements
+                    ancestor = ai_elem.find_element(By.XPATH, "./ancestor::div[3]")
+                    questions = ancestor.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
+                    
+                    for q in questions:
+                        text = q.text.strip()
+                        if (q.is_displayed() and 
+                            q.is_enabled() and 
+                            len(text) > 10 and
+                            text.count('?') == 1 and
+                            not "do you own" in text.lower()):
+                            self.logger.info(f"✅ Found question near CMC AI: '{text}'")
+                            return q
+                except:
+                    continue
+        except Exception as e:
+            self.logger.debug(f"CMC AI proximity search failed: {str(e)}")
+        
         self.logger.warning("❌ No AI question prompts found")
+        return None
+
+    def find_and_click_ai_button(self, driver, max_attempts=3):
+        """Enhanced method to find and click AI button with multiple strategies"""
+        for attempt in range(max_attempts):
+            try:
+                # First try without scrolling
+                ai_button = self.find_ai_button(driver)
+                if ai_button:
+                    try:
+                        # 1. Scroll element into center view
+                        driver.execute_script(
+                            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
+                            ai_button
+                        )
+                        time.sleep(1)
+                        
+                        # 2. Ensure element is clickable
+                        driver.execute_script("""
+                            arguments[0].style.position = 'relative';
+                            arguments[0].style.opacity = '1';
+                            arguments[0].style.zIndex = '999999';
+                        """, ai_button)
+                        
+                        # 3. Try direct click
+                        ai_button.click()
+                        self.logger.info("✅ Clicked AI button successfully")
+                        return True
+                    except:
+                        pass
+                
+                # If direct click failed, try different scroll positions
+                scroll_positions = [0.2, 0.4, 0.6, 0.8]
+                for scroll_pos in scroll_positions:
+                    self.logger.info(f"Trying scroll position {int(scroll_pos * 100)}%...")
+                    
+                    # Scroll and wait
+                    driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * {scroll_pos});")
+                    time.sleep(1)
+                    
+                    # Try to find and click button
+                    ai_button = self.find_ai_button(driver)
+                    if ai_button:
+                        try:
+                            # Try multiple click methods
+                            try:
+                                # Method 1: Direct click
+                                ai_button.click()
+                                self.logger.info("✅ Clicked using direct click")
+                                return True
+                            except:
+                                try:
+                                    # Method 2: JavaScript click
+                                    driver.execute_script("arguments[0].click();", ai_button)
+                                    self.logger.info("✅ Clicked using JavaScript")
+                                    return True
+                                except:
+                                    try:
+                                        # Method 3: Action chains
+                                        from selenium.webdriver.common.action_chains import ActionChains
+                                        actions = ActionChains(driver)
+                                        actions.move_to_element(ai_button).click().perform()
+                                        self.logger.info("✅ Clicked using Action Chains")
+                                        return True
+                                    except:
+                                        continue
+                        except:
+                            continue
+                
+                self.logger.warning(f"Attempt {attempt + 1} failed to click AI button")
+                time.sleep(2)
+                
+            except Exception as e:
+                self.logger.error(f"Error in click attempt {attempt + 1}: {str(e)}")
+                time.sleep(2)
+        
+        return False
+
+    def wait_for_ai_content(self, timeout=45):
+        """Enhanced method to wait for and capture AI content"""
+        start_time = time.time()
+        previous_content = None
+        content_stable_count = 0
+        
+        while time.time() - start_time < timeout:
+            try:
+                # Strategy 1: Look for content in right panel
+                right_panel_selectors = [
+                    "//div[contains(@class, 'right-panel')]",
+                    "//div[contains(@class, 'ai-response')]",
+                    "//div[contains(@class, 'ai-content')]",
+                    "//aside",
+                    "//div[@role='complementary']"
+                ]
+                
+                for selector in right_panel_selectors:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for element in elements:
+                        if element.is_displayed():
+                            content = element.text.strip()
+                            
+                            # Check if content is substantial
+                            if len(content) > 100 and ('.' in content or ',' in content):
+                                # Check if content has stabilized (hasn't changed in 2 consecutive checks)
+                                if content == previous_content:
+                                    content_stable_count += 1
+                                    if content_stable_count >= 2:
+                                        self.logger.info(f"✅ Content stabilized after {int(time.time() - start_time)} seconds")
+                                        return content
+                                else:
+                                    content_stable_count = 0
+                                    previous_content = content
+                
+                # Strategy 2: Look for any substantial text that might be AI content
+                potential_content = self.driver.find_elements(By.XPATH, 
+                    "//*[string-length(text()) > 100 and (contains(text(), '.') or contains(text(), ','))]")
+                
+                for element in potential_content:
+                    if element.is_displayed():
+                        content = element.text.strip()
+                        if len(content) > 100 and ('.' in content or ',' in content):
+                            if content == previous_content:
+                                content_stable_count += 1
+                                if content_stable_count >= 2:
+                                    self.logger.info(f"✅ Content stabilized after {int(time.time() - start_time)} seconds")
+                                    return content
+                            else:
+                                content_stable_count = 0
+                                previous_content = content
+                
+                # If we haven't found stable content yet, wait a bit
+                if (time.time() - start_time) % 5 < 0.1:
+                    self.logger.info(f"Still waiting for content... {int(time.time() - start_time)} seconds elapsed")
+                time.sleep(0.5)
+                
+            except Exception as e:
+                self.logger.error(f"Error while waiting for content: {str(e)}")
+                time.sleep(0.5)
+        
         return None
 
     def get_ai_token_review(self, coin_symbol: str, coin_name: str, coin_url: str = None) -> dict:
@@ -508,269 +616,40 @@ class CMCScraper:
                 target_url = f"{self.base_url}/currencies/{coin_slug}/"
             
             self.logger.info(f"Navigating to: {target_url}")
+            self.driver.get(target_url)
             
-            # Navigate with retry logic
-            max_retries = 3
-            for retry in range(max_retries):
-                try:
-                    self.driver.get(target_url)
-                    
-                    # Smart wait for page to fully load
-                    self.logger.info("Waiting for page to fully load...")
-                    WebDriverWait(self.driver, 30).until(
-                        lambda driver: driver.execute_script("return document.readyState") == "complete"
-                    )
-                    
-                    # Wait for specific CMC elements to ensure page is ready
-                    WebDriverWait(self.driver, 20).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "[data-role='coin-name'], h1, .coin-name"))
-                    )
-                    
-                    # Additional wait to ensure all dynamic content loads
-                    time.sleep(3)
-                    
-                    # Verify we're on the right page
-                    page_text = self.driver.find_element(By.TAG_NAME, "body").text
-                    if coin_symbol.upper() in page_text.upper():
-                        self.logger.info(f"✅ Confirmed on {coin_symbol} page")
-                        break
-                    else:
-                        self.logger.warning(f"Page doesn't contain {coin_symbol}, retrying...")
-                        if retry < max_retries - 1:
-                            time.sleep(2)
-                            continue
-                except Exception as e:
-                    self.logger.error(f"Navigation attempt {retry+1} failed: {str(e)}")
-                    if retry < max_retries - 1:
-                        time.sleep(2)
-                        continue
-                    raise
+            # Wait for page load
+            self.logger.info("Waiting for page to fully load...")
+            WebDriverWait(self.driver, 30).until(
+                lambda driver: driver.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(3)  # Additional wait for dynamic content
             
-            # Try different scroll positions to find the AI button
-            scroll_positions = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-            ai_button = None
-            
-            for scroll_pos in scroll_positions:
-                self.logger.info(f"Scrolling to {int(scroll_pos * 100)}% of page...")
-                self.driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * {scroll_pos});")
-                time.sleep(2)
-                
-                # Try to find AI button using smart detection
-                ai_button = self.find_ai_button(self.driver)
-                if ai_button:
-                    break
-            
-            if not ai_button:
-                # Last attempt - check if there's an XPath in the provided parameter
-                if coin_url and "xpath:" in coin_url:
-                    # Extract XPath from URL parameter if provided
-                    custom_xpath = coin_url.split("xpath:")[1]
-                    try:
-                        ai_button = self.driver.find_element(By.XPATH, custom_xpath)
-                        self.logger.info(f"Found AI button with custom XPath")
-                    except:
-                        pass
-            
-            if not ai_button:
-                # Save screenshot for debugging
-                screenshot_path = f"debug_{coin_symbol}_{time.strftime('%Y%m%d_%H%M%S')}.png"
-                self.driver.save_screenshot(screenshot_path)
-                self.logger.error(f"AI button not found. Screenshot saved: {screenshot_path}")
-                
+            # Try to click AI button
+            if not self.find_and_click_ai_button(self.driver):
                 return {
                     'success': False,
                     'coin_name': coin_name,
                     'coin_symbol': coin_symbol,
-                    'error': 'AI button not found after exhaustive search',
-                    'screenshot': screenshot_path
+                    'error': 'Could not click AI button'
                 }
             
-            try:
-                self.logger.info("✅ Found AI analysis button!")
-                
-                # Scroll button into view
-                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", ai_button)
-                time.sleep(2)
-                
-                # Highlight the button for visual confirmation (debugging)
-                self.driver.execute_script("""
-                    arguments[0].style.border = '3px solid red';
-                    arguments[0].style.backgroundColor = 'yellow';
-                """, ai_button)
-                time.sleep(1)
-                
-                # Try multiple click methods
-                click_success = False
-                for method in range(3):
-                    try:
-                        if method == 0:
-                            # Method 1: Regular click
-                            ai_button.click()
-                            self.logger.info("Clicked using regular click")
-                        elif method == 1:
-                            # Method 2: JavaScript click
-                            self.driver.execute_script("arguments[0].click();", ai_button)
-                            self.logger.info("Clicked using JavaScript")
-                        else:
-                            # Method 3: Action chains
-                            from selenium.webdriver.common.action_chains import ActionChains
-                            ActionChains(self.driver).move_to_element(ai_button).click().perform()
-                            self.logger.info("Clicked using Action Chains")
-                        
-                        click_success = True
-                        break
-                    except Exception as e:
-                        self.logger.warning(f"Click method {method+1} failed: {str(e)}")
-                        time.sleep(1)
-                
-                if not click_success:
-                    raise Exception("Could not click AI button with any method")
-                
-                # Wait for AI content to generate with visual feedback
-                self.logger.info("⏳ Waiting for AI to generate content...")
-                self.logger.info("This may take 15-30 seconds...")
-                
-                # Store the question text to verify it changes
-                clicked_question = ai_button.text
-                self.logger.info(f"Clicked on question: '{clicked_question}'")
-                
-                content_changed = False
-                ai_response_text = ""
-                
-                for wait_time in range(30):  # Wait up to 30 seconds
-                    time.sleep(1)
-                    try:
-                        # Look for TLDR section on the right side of the screen
-                        tldr_selectors = [
-                            "//h2[text()='TLDR' or text()='TL;DR']",
-                            "//div[contains(text(), 'TLDR')]",
-                            "//span[contains(text(), 'TLDR')]",
-                            "//*[contains(@class, 'tldr')]",
-                            "//h3[text()='TLDR' or text()='TL;DR']"
-                        ]
-                        
-                        tldr_element = None
-                        for selector in tldr_selectors:
-                            try:
-                                elements = self.driver.find_elements(By.XPATH, selector)
-                                for elem in elements:
-                                    if elem.is_displayed():
-                                        tldr_element = elem
-                                        self.logger.info("✅ Found TLDR section!")
-                                        break
-                                if tldr_element:
-                                    break
-                            except:
-                                continue
-                        
-                        if tldr_element:
-                            # Get the TLDR content - look for the parent container
-                            tldr_container = tldr_element.find_element(By.XPATH, "./..")
-                            
-                            # Get all text content after TLDR
-                            full_text = tldr_container.text
-                            
-                            # Extract just the TLDR content
-                            if "TLDR" in full_text:
-                                # Split by TLDR and take everything after it
-                                parts = full_text.split("TLDR")
-                                if len(parts) > 1:
-                                    tldr_content = parts[1].strip()
-                                    
-                                    # If there's another section after TLDR, cut it off
-                                    # Common sections that might follow: "Analysis", "Details", "Read more"
-                                    for end_marker in ["Analysis", "Details", "Read more", "Full report", "Thought for"]:
-                                        if end_marker in tldr_content:
-                                            tldr_content = tldr_content.split(end_marker)[0].strip()
-                                    
-                                    # Clean up the content
-                                    tldr_content = tldr_content.strip()
-                                    
-                                    if len(tldr_content) > 50:  # Make sure we have substantial content
-                                        content_changed = True
-                                        ai_response_text = tldr_content
-                                        self.logger.info(f"✅ Extracted TLDR content! Length: {len(ai_response_text)} chars")
-                                        self.logger.info(f"TLDR Preview: {ai_response_text[:100]}...")
-                                        break
-                        
-                        # Alternative: Look for right-side panel with AI response
-                        if not content_changed:
-                            right_panel_selectors = [
-                                "//div[contains(@class, 'right')]//div[contains(text(), 'rose') or contains(text(), 'fell') or contains(text(), 'gained')]",
-                                "//aside//div[contains(text(), 'ETF') or contains(text(), 'Technical') or contains(text(), 'Sector')]",
-                                "//div[@role='complementary']//div[contains(text(), '%')]"
-                            ]
-                            
-                            for selector in right_panel_selectors:
-                                try:
-                                    response_elem = self.driver.find_element(By.XPATH, selector)
-                                    if response_elem.is_displayed() and len(response_elem.text) > 100:
-                                        # Try to find the containing section
-                                        container = response_elem.find_element(By.XPATH, "./ancestor::div[contains(@class, 'container') or contains(@class, 'section') or contains(@class, 'panel')]")
-                                        if container:
-                                            ai_response_text = container.text
-                                            # Extract TLDR if present
-                                            if "TLDR" in ai_response_text:
-                                                parts = ai_response_text.split("TLDR")
-                                                if len(parts) > 1:
-                                                    ai_response_text = parts[1].split("Thought for")[0].strip()
-                                            
-                                            content_changed = True
-                                            self.logger.info(f"✅ Found AI response in right panel! Length: {len(ai_response_text)} chars")
-                                            break
-                                except:
-                                    continue
-                        
-                        if content_changed:
-                            break
-                        
-                        if wait_time % 5 == 0:
-                            self.logger.info(f"Still waiting for TLDR content... {wait_time} seconds elapsed")
-                            
-                    except Exception as e:
-                        self.logger.debug(f"Check failed at {wait_time}s: {str(e)}")
-                
-                if content_changed and ai_response_text:
-                    return {
-                        'success': True,
-                        'coin_name': coin_name,
-                        'coin_symbol': coin_symbol,
-                        'ai_review': ai_response_text,
-                        'question_asked': clicked_question,
-                        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                        'url_used': target_url
-                    }
-                else:
-                    self.logger.error("AI content did not appear after 30 seconds")
-                    # Take screenshot for debugging
-                    screenshot_path = f"no_response_{coin_symbol}_{time.strftime('%Y%m%d_%H%M%S')}.png"
-                    self.driver.save_screenshot(screenshot_path)
-                    
-                    return {
-                        'success': False,
-                        'coin_name': coin_name,
-                        'coin_symbol': coin_symbol,
-                        'error': 'AI content generation timeout - no response appeared',
-                        'screenshot': screenshot_path
-                    }
-                
-            except Exception as e:
-                self.logger.error(f"AI button interaction failed: {str(e)}")
-                
-                # Check if we need to log in
-                if "log in" in self.driver.page_source.lower() or "sign up" in self.driver.page_source.lower():
-                    return {
-                        'success': False,
-                        'coin_name': coin_name,
-                        'coin_symbol': coin_symbol,
-                        'error': 'Not logged in to CMC - please log in manually first'
-                    }
-                
+            # Wait for and capture AI content
+            content = self.wait_for_ai_content()
+            if content:
+                return {
+                    'success': True,
+                    'coin_name': coin_name,
+                    'coin_symbol': coin_symbol,
+                    'ai_review': content,
+                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+            else:
                 return {
                     'success': False,
                     'coin_name': coin_name,
                     'coin_symbol': coin_symbol,
-                    'error': f'AI button interaction failed: {str(e)}'
+                    'error': 'Timeout waiting for AI content'
                 }
                 
         except Exception as e:

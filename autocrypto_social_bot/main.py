@@ -15,9 +15,9 @@ from selenium.webdriver.chrome.options import Options
 # Add the project root directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from profiles.profile_manager import ProfileManager
-from scrapers.cmc_scraper import CMCScraper
-from utils.helpers import setup_logging, random_delay
+from autocrypto_social_bot.profiles.profile_manager import ProfileManager
+from autocrypto_social_bot.scrapers.cmc_scraper import CMCScraper
+from autocrypto_social_bot.utils.helpers import setup_logging, random_delay
 
 class CryptoAIAnalyzer:
     def __init__(self):

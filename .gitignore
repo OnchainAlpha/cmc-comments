@@ -7,6 +7,7 @@ __pycache__/
 .vscode/
 .idea/
 *.iml
+.cursor/
 
 # Logs and temporary files
 *.log
@@ -15,4 +16,12 @@ temp_chrome_profile/
 chrome_profiles/
 
 # Environment variables
-.env 
+.env
+
+# Generated files
+autocrypto_social_bot/ai_reviews/
+autocrypto_social_bot/analysis_data/
+no_response_*.png
+debug_*.png
+failed_post_*.txt
+analysis_*.txt 
