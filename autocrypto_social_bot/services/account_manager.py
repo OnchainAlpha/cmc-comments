@@ -413,6 +413,12 @@ class AutomatedAccountManager:
             
             self.logger.info(f"🧹 Cleaned up {len(old_accounts)} inactive accounts")
     
+    def get_all_used_emails(self) -> List[str]:
+        """Get all email aliases currently in use by accounts"""
+        with sqlite3.connect(self.database.db_path) as conn:
+            cursor = conn.execute("SELECT email_alias FROM accounts WHERE status != 'inactive'")
+            return [row[0] for row in cursor.fetchall()]
+    
     def get_stats_summary(self) -> Dict:
         """Get comprehensive account statistics"""
         stats = self.database.get_account_stats()
