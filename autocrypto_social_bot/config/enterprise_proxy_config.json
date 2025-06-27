@@ -1,0 +1,13 @@
+{
+    "test_timeout": 10,
+    "max_workers": 20,
+    "min_success_rate": 0.1,
+    "test_with_cmc": true,
+    "enable_residential_apis": true,
+    "proxykingdom_token": "",
+    "proxifly_key": "",
+    "scraperapi_key": "",
+    "max_proxy_failures": 3,
+    "proxy_rotation_interval": 300,
+    "use_manual_proxies": true
+}

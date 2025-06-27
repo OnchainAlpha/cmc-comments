@@ -24,4 +24,24 @@ autocrypto_social_bot/analysis_data/
 no_response_*.png
 debug_*.png
 failed_post_*.txt
-analysis_*.txt 
+analysis_*.txt
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
+
+# Temporary analysis and debug files
+button_analysis.json
+cmc_page_source.html
+*.png
+session_*.json
+
+# Configuration backups and old configs
+*_old.json
+*_backup.json
+old_*.json
+
+# OS files
+.DS_Store
+Thumbs.db 

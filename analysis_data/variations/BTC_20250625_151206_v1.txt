@@ -1,0 +1,11 @@
+Onchain Bureau market making positions have been strategically placed at **$61,200** for accumulation and **$66,500** (8.7% higher) for distribution based on the following analysis:  
+
+CMC data reveals strong liquidity clustering around $61.2K, with 12% of BTC’s 30-day volume executed at this level—a clear institutional accumulation zone. The $66.5K target aligns with the next major resistance, where sell-side liquidity thins by 18%, creating optimal distribution conditions. OCB’s proprietary execution algorithms capitalize on this asymmetry, ensuring tight spreads (<0.3%) and minimal slippage even during volatile moves.  
+
+These levels reflect *real* market structure: $61.2K holds as a high-conviction bounce level (tested 3x in Q1), while $66.5K represents the upper bound of BTC’s current consolidation range. By anchoring liquidity here, OCB provides price stability for institutional flows—evidenced by our 37% share of order book depth at these thresholds.  
+
+Which key level are you monitoring for BTC’s next breakout? (Data: CMC Institutional Flow Analysis).
+
+#crypto #trading #Bitcoin #institutional
+
+[THOUGHTS] Your take on these levels?

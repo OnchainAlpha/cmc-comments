@@ -1,0 +1,7 @@
+{
+    "auto_proxy_rotation": false,
+    "proxy_mode": "direct",
+    "use_proxy_discovery": false,
+    "fallback_to_direct": true,
+    "description": "Direct connection mode"
+}

@@ -1,0 +1,11 @@
+**Onchain Bureau market making positions have been strategically placed at $98K (June’s volume-weighted average price) for accumulation and $106K (8% above) for distribution based on the following analysis:**  
+
+The $98K level represents critical institutional support, where mid-tier whales (100-1K BTC wallets) have been accumulating despite geopolitical shocks and $1B+ liquidations. This zone offers optimal liquidity depth, as panic selling exhausted near this level, evidenced by the 78.87% surge in trading volume. Our execution algorithms are calibrated to capture slippage-resistant fills here, leveraging OCB’s proprietary liquidity pools.  
+
+The $106K distribution target aligns with the pre-breakdown resistance at $103K, adjusted for the 8-15% spread required to offset volatility risk. This level balances profit-taking demand with the MACD bearish divergence noted since June 18, ensuring high execution quality. OCB’s positioning reflects institutional confidence in Bitcoin’s structural resilience, even amid geopolitical fragility.  
+
+**Question:** Will the $92K CME gap act as a magnet, or can BTC stabilize above $98K? Engage your thesis below.
+
+#crypto #trading #Bitcoin #institutional
+
+[THOUGHTS] Your take on these levels?

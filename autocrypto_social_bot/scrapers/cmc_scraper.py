@@ -1,5 +1,6 @@
 import time
 import logging
+import re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,120 +9,726 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 from autocrypto_social_bot.utils.helpers import random_delay
+import unicodedata
+import random
+
+# 🔥 BREAKTHROUGH: Import our verified working CMC bypass system
+try:
+    from autocrypto_social_bot.cmc_bypass_manager import cmc_bypass_manager
+    CMC_BYPASS_AVAILABLE = True
+    print("🔥 CMC Scraper: Breakthrough bypass system loaded!")
+except ImportError:
+    CMC_BYPASS_AVAILABLE = False
+    cmc_bypass_manager = None
+    print("⚠️ CMC Scraper: Bypass system not available, using fallback")
 
 class CMCScraper:
-    def __init__(self, driver=None):
+    def __init__(self, driver, profile_manager=None, proxy_config=None):
+        self.driver = driver
+        self.profile_manager = profile_manager
+        self.proxy_config = proxy_config or {'auto_proxy_rotation': True, 'proxy_mode': 'enterprise'}
+        
+        self.logger = logging.getLogger(__name__)
+        
+        # CMC URLs
         self.base_url = "https://coinmarketcap.com"
         self.community_url = "https://coinmarketcap.com/community/"
-        self.driver = driver
-        self.logger = logging.getLogger(__name__)
+        self.currencies_url = "https://coinmarketcap.com/currencies/"
+        
+        # Post length limit for CMC community
+        self.MAX_POST_LENGTH = 2000
+        
+        # Show proxy configuration status
+        print(f"🚀 CMC Scraper: {'Proxy rotation enabled' if self.proxy_config.get('auto_proxy_rotation', True) else 'Direct connection mode'}")
+        if not self.proxy_config.get('auto_proxy_rotation', True):
+            print("   ❌ Proxy switching disabled - will use direct connection only")
+        else:
+            print(f"   ✅ Proxy mode: {self.proxy_config.get('proxy_mode', 'enterprise').upper()}")
+        
+        # Initialize breakthrough CMC bypass system if available
+        global CMC_BYPASS_AVAILABLE, cmc_bypass_manager
+        if CMC_BYPASS_AVAILABLE and cmc_bypass_manager and self.proxy_config.get('auto_proxy_rotation', True):
+            try:
+                cmc_status = cmc_bypass_manager.get_system_status()
+                if cmc_status['verified_proxies'] >= 5:
+                    print("✅ CMC Scraper: 5 verified working CMC bypass proxies ready!")
+                else:
+                    print(f"⚠️ CMC Scraper: {cmc_status['verified_proxies']} verified proxies available")
+            except Exception as e:
+                print(f"⚠️ CMC Scraper: Bypass system error - {str(e)}")
+        elif not self.proxy_config.get('auto_proxy_rotation', True):
+            print("🌐 CMC Scraper: Direct connection mode - bypass system disabled")
+        else:
+            print("⚠️ CMC Scraper: Breakthrough bypass system not available")
+
+    def _handle_rate_limit(self):
+        """Handle rate limit by switching to next profile"""
+        if not self.profile_manager:
+            self.logger.warning("No profile manager available for rotation")
+            return False
+
+        try:
+            self.logger.info("Switching to next profile due to rate limit...")
+            self.driver = self.profile_manager.switch_to_next_profile()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to switch profile: {str(e)}")
+            return False
+
+    def _sanitize_message_for_chrome(self, message: str) -> str:
+        """Sanitize message to remove characters that ChromeDriver can't handle"""
+        # Remove or replace problematic Unicode characters
+        sanitized = ""
+        for char in message:
+            # Check if character is in BMP (Basic Multilingual Plane)
+            if ord(char) <= 0xFFFF:
+                sanitized += char
+            else:
+                # Replace non-BMP characters with safe alternatives
+                if char in ['💭', '💼', '📊', '🔍', '📈', '📉', '💰', '🎯', '🚀', '✅', '❌', '⚠️', '💡']:
+                    # Replace common emojis with text equivalents
+                    emoji_replacements = {
+                        '💭': '[THOUGHTS]',
+                        '💼': '[PROFESSIONAL]',
+                        '📊': '[STATS]',
+                        '🔍': '[ANALYSIS]',
+                        '📈': '[UP]',
+                        '📉': '[DOWN]',
+                        '💰': '[MONEY]',
+                        '🎯': '[TARGET]',
+                        '🚀': '[ROCKET]',
+                        '✅': '[SUCCESS]',
+                        '❌': '[FAIL]',
+                        '⚠️': '[WARNING]',
+                        '💡': '[IDEA]'
+                    }
+                    sanitized += emoji_replacements.get(char, '[EMOJI]')
+                else:
+                    # Replace other non-BMP characters with space
+                    sanitized += ' '
+        
+        # Also remove any other potentially problematic characters
+        problematic_chars = ['\u200b', '\u200c', '\u200d', '\u2060', '\u2061', '\u2062', '\u2063', '\u2064']
+        for char in problematic_chars:
+            sanitized = sanitized.replace(char, '')
+        
+        # Normalize Unicode to remove combining characters
+        sanitized = unicodedata.normalize('NFKC', sanitized)
+        
+        return sanitized.strip()
+
+    def _split_message(self, message: str) -> list:
+        """Split a long message into chunks that fit CMC's character limit"""
+        if len(message) <= self.MAX_POST_LENGTH:
+            return [message]
+            
+        chunks = []
+        lines = message.split('\n')
+        current_chunk = ""
+        
+        for line in lines:
+            # If adding this line would exceed limit, save current chunk and start new one
+            if len(current_chunk) + len(line) + 1 > self.MAX_POST_LENGTH:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = line
+            else:
+                current_chunk = current_chunk + "\n" + line if current_chunk else line
+                
+        # Add the last chunk if not empty
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            
+        # Add part numbers to chunks
+        total_parts = len(chunks)
+        if total_parts > 1:
+            for i in range(total_parts):
+                chunks[i] = f"[Part {i+1}/{total_parts}]\n\n{chunks[i]}"
+                
+        return chunks
 
     def post_community_comment(self, symbol: str, message: str) -> bool:
+        """Post a comment to CMC community with anti-detection and shadowban handling"""
+        max_attempts = 3
+        current_attempt = 0
+
+        while current_attempt < max_attempts:
+            try:
+                # Check for shadowban before posting
+                if hasattr(self.profile_manager, 'check_and_handle_shadowban'):
+                    shadowban_detected = self.profile_manager.check_and_handle_shadowban()
+                    if shadowban_detected:
+                        print("🚫 [SHADOWBAN] Detected but continuing with current browser...")
+                        print("💡 [TIP] Posts may not appear if truly shadowbanned")
+                        # Continue with current driver - no longer closing browser
+                
+                # Get adaptive delay from anti-detection system
+                if hasattr(self.profile_manager, 'get_adaptive_delay'):
+                    adaptive_delay = self.profile_manager.get_adaptive_delay()
+                    print(f"⏱️ [ADAPTIVE] Using {adaptive_delay}s delay based on session state")
+                else:
+                    adaptive_delay = random.randint(45, 90)
+                
+                # Add human-like behavior before posting
+                if hasattr(self.profile_manager, 'anti_detection') and self.profile_manager.anti_detection:
+                    self.profile_manager.anti_detection.randomize_behavior(self.driver)
+                
+                # Navigate to community page
+                self._navigate_to_cmc_with_bypass(self.community_url)
+                random_delay(2, 4)
+
+                # Try to post
+                success = self._post_comment(symbol, message)
+                
+                if success:
+                    print("✅ [SUCCESS] Post successful!")
+                    
+                    # Update anti-detection system with success
+                    if hasattr(self.profile_manager, 'update_post_result'):
+                        self.profile_manager.update_post_result(True)
+                    
+                    # Only do IP/profile rotation if proxy rotation is enabled
+                    if self.proxy_config.get('auto_proxy_rotation', True):
+                        # Check if we should rotate IP for next post
+                        should_rotate = False
+                        if hasattr(self.profile_manager, 'anti_detection') and self.profile_manager.anti_detection:
+                            should_rotate = self.profile_manager.anti_detection.should_rotate_ip()
+                        
+                        if should_rotate:
+                            print("🔄 [IP-ROTATE] Scheduled IP rotation for next post")
+                            print("🔍 [IP-ROTATE] Reason: Anti-detection system triggered rotation")
+                            try:
+                                self.driver = self.profile_manager.switch_to_next_profile_with_ip_rotation()
+                                print("✅ [IP-ROTATE] Successfully rotated IP and profile")
+                            except Exception as e:
+                                print(f"⚠️ [IP-ROTATE] Failed: {str(e)}, continuing with current session")
+                        else:
+                            # Regular profile rotation
+                            if self.profile_manager:
+                                try:
+                                    print("🔄 [PROFILE] Regular profile rotation (no IP change)")
+                                    self.driver = self.profile_manager.switch_to_next_profile()
+                                    print("✅ [PROFILE] Regular profile rotation completed")
+                                except Exception as e:
+                                    print(f"⚠️ [PROFILE] Rotation failed: {str(e)}")
+                    else:
+                        print("⚠️ [SUCCESS] IP/Profile rotation disabled by user preference")
+                    
+                    # Apply adaptive delay before next operation
+                    print(f"⏱️ [DELAY] Applying adaptive delay: {adaptive_delay}s")
+                    time.sleep(adaptive_delay)
+                    
+                    return True
+
+                # Handle posting failure
+                print("❌ [FAIL] Post failed, analyzing error...")
+                
+                # Check for specific error types
+                error_type = self._detect_error_type()
+                print(f"🔍 [ERROR-TYPE] Detected: {error_type}")
+                
+                # Update anti-detection system with failure
+                if hasattr(self.profile_manager, 'update_post_result'):
+                    self.profile_manager.update_post_result(False, error_type)
+                
+                # Handle different error types
+                if error_type == 'shadowban':
+                    print("🚫 [SHADOWBAN] Shadowban detected, but continuing without closing browser")
+                    print("💡 [TIP] Manual intervention may be needed if posts aren't appearing")
+                    # REMOVED: Aggressive browser closing and IP rotation
+                    # This was causing WinError 10061 and more problems than it solved
+                    current_attempt += 1
+                    continue
+                
+                elif error_type == 'rate_limit':
+                    print("⏳ [RATE-LIMIT] Rate limit detected, applying extended delay...")
+                    extended_delay = random.randint(120, 300)  # 2-5 minutes
+                    print(f"⏱️ [EXTENDED-DELAY] Waiting {extended_delay}s...")
+                    time.sleep(extended_delay)
+                    
+                    # Only try IP rotation if proxy rotation is enabled
+                    if self.proxy_config.get('auto_proxy_rotation', True):
+                        print("🔄 [RATE-LIMIT] Attempting IP rotation to bypass rate limit...")
+                        if hasattr(self.profile_manager, 'switch_to_next_profile_with_ip_rotation'):
+                            try:
+                                self.driver = self.profile_manager.switch_to_next_profile_with_ip_rotation()
+                                print("✅ [RATE-LIMIT] IP rotation completed")
+                            except Exception as e:
+                                print(f"⚠️ [RATE-LIMIT] IP rotation failed: {str(e)}")
+                    else:
+                        print("⚠️ [RATE-LIMIT] IP rotation disabled by user preference")
+                    
+                    current_attempt += 1
+                    continue
+                
+                # For other errors, only rotate profile if proxy rotation is enabled
+                if self.profile_manager and self.proxy_config.get('auto_proxy_rotation', True):
+                    try:
+                        print("🔄 [ERROR] Rotating profile due to posting error...")
+                        self.driver = self.profile_manager.switch_to_next_profile()
+                        print("✅ [ERROR] Profile rotated after error")
+                    except Exception as e:
+                        print(f"⚠️ [ERROR] Failed to rotate profile: {str(e)}")
+                elif not self.proxy_config.get('auto_proxy_rotation', True):
+                    print("⚠️ [ERROR] Profile rotation disabled by user preference")
+
+                return False
+
+            except Exception as e:
+                print(f"❌ [EXCEPTION] Error posting comment: {str(e)}")
+                
+                # Check if this is a missing attribute error - if so, don't retry
+                if "has no attribute" in str(e):
+                    print(f"🚫 [CRITICAL] Attribute error detected - this indicates a code bug, not a rate limit")
+                    print(f"🔧 [CRITICAL] Please check that all required attributes are initialized")
+                    return False
+                
+                # Update anti-detection with exception
+                if hasattr(self.profile_manager, 'update_post_result'):
+                    self.profile_manager.update_post_result(False, 'exception')
+                
+                current_attempt += 1
+                
+                # Only try rotating profile on error if proxy rotation is enabled
+                if self.profile_manager and current_attempt < max_attempts and self.proxy_config.get('auto_proxy_rotation', True):
+                    try:
+                        if hasattr(self.profile_manager, 'switch_to_next_profile_with_ip_rotation'):
+                            self.driver = self.profile_manager.switch_to_next_profile_with_ip_rotation()
+                        else:
+                            self.driver = self.profile_manager.switch_to_next_profile()
+                        print("🔄 [EXCEPTION] Rotated profile after exception")
+                        time.sleep(random.randint(10, 30))  # Wait before retry
+                    except Exception as rotate_error:
+                        print(f"⚠️ [EXCEPTION] Failed to rotate profile: {str(rotate_error)}")
+                elif not self.proxy_config.get('auto_proxy_rotation', True):
+                    print("⚠️ [EXCEPTION] Profile rotation disabled by user preference")
+
+        print(f"❌ [FINAL-FAIL] Failed after {max_attempts} attempts")
+        return False
+
+    def _detect_error_type(self) -> str:
+        """Detect the type of error from page content"""
+        try:
+            page_source = self.driver.page_source.lower()
+            
+            # FIXED: Shadowban indicators - only real shadowbans, not rate limits
+            shadowban_indicators = [
+                "your post was not published",
+                "content not visible to others", 
+                "under review by moderators",
+                "violates our community guidelines",
+                "temporarily restricted access",
+                "account suspended",
+                "unusual activity detected",
+                "content has been removed",
+                "account has been restricted",
+                "posts are not showing to others"
+            ]
+            
+            for indicator in shadowban_indicators:
+                if indicator in page_source:
+                    return 'shadowban'
+            
+            # FIXED: Rate limit indicators - these are normal, not shadowbans!
+            rate_limit_indicators = [
+                "too frequently",
+                "wait before posting", 
+                "rate limit",
+                "try again later",
+                "slow down",
+                "posting too fast",
+                "please wait"
+            ]
+            
+            for indicator in rate_limit_indicators:
+                if indicator in page_source:
+                    return 'rate_limit'  # This should NOT trigger shadowban detection!
+            
+            # Check for error elements
+            error_selectors = [
+                "//div[contains(text(), 'error')]",
+                "//div[contains(text(), 'failed')]",
+                "//div[contains(@class, 'error')]"
+            ]
+            
+            for selector in error_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    if elements:
+                        return 'general_error'
+                except:
+                    continue
+            
+            return 'unknown'
+            
+        except Exception as e:
+            self.logger.debug(f"Error detecting error type: {str(e)}")
+            return 'unknown'
+    
+    def _check_for_login_dialog(self) -> bool:
+        """
+        Specifically check for login dialogs/modals that appear when not logged in.
+        This addresses the exact issue shown in the user's screenshot.
+        """
+        try:
+            # Check for login dialog elements (specific to the user's screenshot)
+            login_dialog_selectors = [
+                # Modal/dialog containers
+                "//div[contains(@class, 'modal')]//input[@type='password']",
+                "//div[contains(@class, 'dialog')]//input[@type='password']", 
+                "//div[contains(@role, 'dialog')]//input[@type='password']",
+                
+                # Login form elements
+                "//form//input[@placeholder*='email' or @placeholder*='Email']",
+                "//form//input[@type='password']",
+                
+                # Specific login buttons/text from screenshot
+                "//button[contains(text(), 'Log In')]",
+                "//button[contains(text(), 'Sign Up')]",
+                "//div[contains(text(), 'Continue with Google')]",
+                "//div[contains(text(), 'Continue with Apple')]",
+                "//div[contains(text(), 'Continue with Binance')]",
+                "//div[contains(text(), 'Continue with Wallet')]",
+                "//div[contains(text(), 'OR CONTINUE WITH EMAIL')]",
+                
+                # Email/password input fields
+                "//input[@placeholder='Enter your email address...']",
+                "//input[@placeholder='Enter your password...']",
+                
+                # Generic login indicators
+                "//div[contains(@class, 'login')]",
+                "//div[contains(@class, 'signin')]",
+                "//div[contains(@class, 'auth')]"
+            ]
+            
+            print("🔍 Checking for login dialog elements...")
+            
+            # Check each selector
+            for selector in login_dialog_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for element in elements:
+                        if element.is_displayed():
+                            print(f"❌ FOUND LOGIN DIALOG ELEMENT: {selector}")
+                            print(f"   Element text: {element.text[:100] if element.text else 'No text'}")
+                            return True
+                except Exception as e:
+                    # Continue checking other selectors if one fails
+                    continue
+            
+            # Check page source for login-related text (from screenshot)
+            page_source = self.driver.page_source.lower()
+            login_text_indicators = [
+                'log in',
+                'sign up',
+                'continue with google',
+                'continue with apple', 
+                'continue with binance',
+                'continue with wallet',
+                'or continue with email',
+                'enter your email address',
+                'enter your password',
+                'email address',
+                'password'
+            ]
+            
+            login_text_count = 0
+            for indicator in login_text_indicators:
+                if indicator in page_source:
+                    login_text_count += 1
+                    
+            # If we find 3 or more login text indicators, likely a login dialog
+            if login_text_count >= 3:
+                print(f"❌ FOUND LOGIN TEXT INDICATORS: {login_text_count}/({len(login_text_indicators)}) indicators present")
+                return True
+            
+            # Check current URL for login redirects
+            current_url = self.driver.current_url.lower()
+            login_url_indicators = ['login', 'signin', 'auth', 'account/login']
+            
+            for indicator in login_url_indicators:
+                if indicator in current_url:
+                    print(f"❌ LOGIN URL DETECTED: {current_url}")
+                    return True
+            
+            # Check for modal overlay (login dialogs often have overlay backgrounds)
+            try:
+                overlays = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'overlay') or contains(@class, 'modal-backdrop') or contains(@class, 'backdrop')]")
+                for overlay in overlays:
+                    if overlay.is_displayed():
+                        # If there's an overlay AND login text, it's likely a login modal
+                        if login_text_count >= 2:
+                            print(f"❌ MODAL OVERLAY + LOGIN TEXT DETECTED")
+                            return True
+            except:
+                pass
+            
+            print("✅ No login dialog detected")
+            return False
+            
+        except Exception as e:
+            print(f"⚠️ Error checking for login dialog: {str(e)}")
+            # On error, assume no login dialog (don't block posting unnecessarily)
+            return False
+
+    def _post_comment(self, symbol: str, message: str) -> bool:
         """Post a comment in CMC community"""
         try:
+            # Sanitize message to prevent ChromeDriver crashes
+            sanitized_message = self._sanitize_message_for_chrome(message)
+            
+            # Split message into chunks if needed
+            message_chunks = self._split_message(sanitized_message)
+            total_chunks = len(message_chunks)
+            
             print("\n" + "="*50)
             print(f"🚀 POSTING TO CMC COMMUNITY: ${symbol}")
+            if total_chunks > 1:
+                print(f"Message will be split into {total_chunks} parts")
             print("="*50)
             
-            # Navigate to community page
-            print("1. Navigating to CMC community...")
-            self.driver.get(self.community_url)
-            random_delay(3, 4)
-            
-            # Find and click the editor div
-            print("2. Looking for editor...")
-            editor_div = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, 'div[contenteditable="true"]'))
-            )
-            print("✅ Found editor")
-            editor_div.click()
-            random_delay(2, 3)
-            
-            # Type the ticker symbol
-            print(f"3. Typing ${symbol}...")
-            editor_div.send_keys(f"${symbol}")
-            random_delay(2, 3)
-            
-            # Press Enter to select the ticker
-            print("4. Selecting ticker...")
-            editor_div.send_keys(Keys.ENTER)
-            random_delay(2, 3)
-            
-            # Replace emojis with text equivalents
-            emoji_replacements = {
-                "🔍": "[ANALYSIS]",
-                "📊": "[STATS]",
-                "🏥": "[HEALTH]",
-                "⚠️": "[WARNING]",
-                "🚩": "[RISK]",
-                "💡": "[NOTE]",
-                "•": "-"
-            }
-            
-            # Clean up the message
-            print("5. Adding analysis message...")
-            for emoji, replacement in emoji_replacements.items():
-                message = message.replace(emoji, replacement)
-            
-            # Split into lines and post
-            lines = message.split('\n')
-            for line in lines:
-                if line.strip():
-                    editor_div.send_keys(line.strip())
-                    editor_div.send_keys(Keys.SHIFT + Keys.ENTER)
-                    random_delay(0.3, 0.5)
-            
-            # Find and click post button - updated selectors
-            print("6. Looking for post button...")
-            try:
-                # Try multiple selectors for the post button
-                post_button = None
-                button_selectors = [
-                    'div.editor-post-button',
-                    '#cmc-editor button',
-                    'button.post-button',
-                    'div[class*="post-button"]',
-                    'div[class*="PostButton"]'
+            success = True
+            for i, chunk in enumerate(message_chunks, 1):
+                if total_chunks > 1:
+                    print(f"\nPosting part {i}/{total_chunks}...")
+                
+                # Navigate to community page
+                print("1. 🔥 Navigating to CMC community via breakthrough bypass...")
+                self._navigate_to_cmc_with_bypass(self.community_url)
+                random_delay(5, 7)  # Increased delay for page load
+                
+                # Find and click the editor div - try multiple selectors
+                print("2. Looking for editor...")
+                editor_selectors = [
+                    'div[contenteditable="true"]',
+                    'div[role="textbox"]',
+                    'div.base-editor div[contenteditable="true"]',
+                    'div.editor div[contenteditable="true"]',
+                    '#cmc-editor div[contenteditable="true"]'
                 ]
                 
-                for selector in button_selectors:
+                editor_div = None
+                for selector in editor_selectors:
                     try:
-                        post_button = WebDriverWait(self.driver, 5).until(
+                        editor_div = WebDriverWait(self.driver, 10).until(  # Increased timeout
                             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                         )
-                        if post_button:
+                        if editor_div:
                             break
-                    except:
+                    except Exception:
                         continue
                 
+                if not editor_div:
+                    print("❌ Could not find editor")
+                    return False
+                    
+                print("✅ Found editor")
+                
+                # Make sure editor is in view and clickable
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", editor_div)
+                random_delay(2, 3)  # Increased delay after scroll
+                
+                # Click editor and wait for it to be ready
+                editor_div.click()
+                random_delay(2, 3)
+                
+                # Type the ticker symbol
+                print(f"3. Typing ${symbol}...")
+                editor_div.send_keys(f"${symbol}")
+                random_delay(3, 4)  # Increased delay after typing symbol
+                
+                # Press Enter to select the ticker
+                print("4. Selecting ticker...")
+                editor_div.send_keys(Keys.ENTER)
+                random_delay(3, 4)  # Increased delay after selecting ticker
+                
+                # Clean up the message (already sanitized, but double-check)
+                print("5. Adding analysis message...")
+                # Additional emoji replacements for safety
+                emoji_replacements = {
+                    "🔍": "[ANALYSIS]",
+                    "📊": "[STATS]",
+                    "🏥": "[HEALTH]",
+                    "⚠️": "[WARNING]",
+                    "🚩": "[RISK]",
+                    "💡": "[NOTE]",
+                    "•": "-",
+                    "💭": "[THOUGHTS]",
+                    "💼": "[PROFESSIONAL]",
+                    "📈": "[UP]",
+                    "📉": "[DOWN]",
+                    "💰": "[MONEY]",
+                    "🎯": "[TARGET]",
+                    "🚀": "[ROCKET]",
+                    "✅": "[SUCCESS]",
+                    "❌": "[FAIL]"
+                }
+                
+                chunk_text = chunk
+                for emoji, replacement in emoji_replacements.items():
+                    chunk_text = chunk_text.replace(emoji, replacement)
+                
+                # Split into lines and post with proper line breaks
+                lines = chunk_text.split('\n')
+                for i, line in enumerate(lines):
+                    if line.strip():
+                        editor_div.send_keys(line.strip())
+                        if i < len(lines) - 1:  # Don't add line break after last line
+                            editor_div.send_keys(Keys.SHIFT + Keys.ENTER)
+                        random_delay(0.5, 1)  # Small delay between lines
+                
+                # Wait for content to be fully entered
+                random_delay(2, 3)
+                
+                # Find and click post button - try multiple approaches
+                print("6. Looking for post button...")
+                post_button = None
+                
+                # Try finding by text content first
+                try:
+                    post_button = WebDriverWait(self.driver, 10).until(  # Increased timeout
+                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Post')]"))
+                    )
+                except Exception:
+                    # Try CSS selectors if text search fails
+                    button_selectors = [
+                        'button[class*="post"]',
+                        'div[class*="post-button"]',
+                        'button[class*="PostButton"]',
+                        '#cmc-editor button',
+                        'div.editor-post-button button'
+                    ]
+                    
+                    for selector in button_selectors:
+                        try:
+                            post_button = WebDriverWait(self.driver, 10).until(  # Increased timeout
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                            )
+                            if post_button:
+                                break
+                        except Exception:
+                            continue
+                
                 if not post_button:
-                    # Try JavaScript click on the button
-                    self.driver.execute_script("""
-                        var buttons = document.querySelectorAll('button');
-                        for(var i=0; i<buttons.length; i++){
-                            if(buttons[i].textContent.toLowerCase().includes('post')){
-                                buttons[i].click();
-                                break;
-                            }
-                        }
-                    """)
-                else:
-                    print("✅ Found post button")
-                    print("7. Clicking post button...")
+                    # Try JavaScript click as last resort
+                    print("Trying JavaScript click...")
                     try:
+                        self.driver.execute_script("""
+                            var buttons = document.querySelectorAll('button');
+                            for(var i=0; i<buttons.length; i++){
+                                if(buttons[i].textContent.toLowerCase().includes('post')){
+                                    buttons[i].click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        """)
+                        random_delay(3, 5)  # Increased delay after JS click
+                    except Exception:
+                        print("❌ Could not find post button")
+                        return False
+                else:
+                    try:
+                        # Scroll the button into view before clicking
+                        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", post_button)
+                        random_delay(1, 2)
                         post_button.click()
-                    except:
-                        # Try JavaScript click if regular click fails
-                        self.driver.execute_script("arguments[0].click();", post_button)
-            
-            except Exception as e:
-                print(f"Error clicking post button: {str(e)}")
-                return False
-            
-            # Wait for post to be published
-            random_delay(5, 7)
-            print(f"\n✅ Successfully posted analysis for ${symbol}")
-            print("="*50 + "\n")
+                        random_delay(3, 5)  # Increased delay after click
+                    except Exception:
+                        print("❌ Failed to click post button")
+                        return False
+                
+                print("✅ Clicked post button")
+                
+                # Wait for success indicator or error message with increased timeout
+                try:
+                    # 🔐 CRITICAL: Check for login dialog FIRST before checking success
+                    print("🔍 Checking for login dialog (priority check)...")
+                    login_dialog_detected = self._check_for_login_dialog()
+                    
+                    if login_dialog_detected:
+                        print("❌ LOGIN DIALOG DETECTED! Post failed because session is not logged in")
+                        print("💡 This profile will be automatically removed by the login detection system")
+                        return False
+                    
+                    success_indicators = [
+                        "//div[contains(text(), 'posted successfully')]",
+                        "//div[contains(@class, 'success')]",
+                        "//div[contains(text(), 'Your comment has been')]",
+                        "//div[contains(text(), 'successfully')]",  # Added more generic success text
+                        "//div[contains(text(), 'Comment posted')]",
+                        "//span[contains(text(), 'Posted')]",
+                        "//div[contains(text(), 'Thanks for sharing')]"
+                    ]
+                    
+                    # Wait longer for success verification
+                    success = False
+                    max_retries = 5  # Increased retries
+                    for retry in range(max_retries):
+                        print(f"Checking for success indicators (attempt {retry + 1}/{max_retries})...")
+                        
+                        # 🔐 ENHANCED: Check for login dialog on every retry
+                        login_dialog_detected = self._check_for_login_dialog()
+                        if login_dialog_detected:
+                            print(f"❌ LOGIN DIALOG APPEARED during retry {retry + 1}! Post failed")
+                            return False
+                        
+                        for indicator in success_indicators:
+                            try:
+                                element = WebDriverWait(self.driver, 5).until(
+                                    EC.presence_of_element_located((By.XPATH, indicator))
+                                )
+                                if element and element.is_displayed():
+                                    print(f"✅ Found success indicator: {element.text[:50]}...")
+                                    success = True
+                                    break
+                            except Exception:
+                                continue
+                        
+                        if success:
+                            break
+                            
+                        # Check URL change as success indicator
+                        try:
+                            current_url = self.driver.current_url
+                            if "community" in current_url and "posted" not in current_url:
+                                # If we're still on community page without error params, likely success
+                                print("✅ URL indicates successful post")
+                                success = True
+                                break
+                        except:
+                            pass
+                        
+                        # Check if the post appears in the community feed
+                        try:
+                            # Look for recent posts containing our symbol
+                            symbol_clean = symbol.replace('$', '').replace('\n', ' ').strip()
+                            feed_posts = self.driver.find_elements(By.XPATH, f"//div[contains(text(), '{symbol_clean}')]")
+                            if feed_posts:
+                                print(f"✅ Found post with symbol {symbol_clean} in feed")
+                                success = True
+                                break
+                        except:
+                            pass
+                        
+                        # Wait between retries
+                        if retry < max_retries - 1:
+                            random_delay(2, 3)
+                    
+                    if not success:
+                        print("❌ Could not verify post success after multiple attempts")
+                        return False
+                        
+                except Exception:
+                    print("❌ Could not verify post success - verification error")
+                    return False
+                
+                # If this is not the last chunk, wait before posting next part
+                if i < total_chunks:
+                    random_delay(5, 7)  # Increased delay between chunks
+                else:
+                    print(f"\n✅ Successfully posted analysis for ${symbol}")
+                    print("="*50 + "\n")
             
             return True
 
@@ -129,169 +736,415 @@ class CMCScraper:
             print(f"\n❌ Error posting to CMC community: {str(e)}")
             return False
 
-    def get_trending_coins(self, limit=5) -> list:
-        """Get trending coins from CMC community"""
+    def get_trending_coins(self, limit=100, page=1) -> list:
+        """Get trending coins from CMC with automatic proxy failure handling"""
+        trending_coins = []
+        
         try:
-            # First check community trending
-            self.logger.info("Navigating to CMC community...")
-            self.driver.get(self.community_url)
-            random_delay(3, 5)  # Increased delay for page load
-
-            # Try multiple possible selectors for trending section
-            trending_selectors = [
-                '[data-testid="trending-tokens"]',
-                '.trending-tokens',
-                '.trending-section',
-                '//div[contains(text(), "Trending")]/../..',  # XPath for trending container
-                '//div[contains(@class, "trending")]'
+            # FIXED: Use different approach for pagination that actually works with CMC
+            # Instead of offset-based pagination, use different sorting/filtering approaches
+            page_urls = [
+                f"{self.base_url}/?type=coins",  # Main trending page
+                f"{self.base_url}/new/?type=coins",  # New coins
+                f"{self.base_url}/gainers-losers/?type=coins",  # Gainers/Losers
+                f"{self.base_url}/trending-cryptocurrencies/",  # Alternative trending  
+                f"{self.base_url}/?type=coins&sort=percent_change_24h",  # Sorted by 24h change
+                f"{self.base_url}/?type=coins&sort=volume_24h",  # Sorted by volume
+                f"{self.base_url}/?type=coins&sort=market_cap",  # Sorted by market cap
+                f"{self.base_url}/?type=coins&sort=price",  # Sorted by price
+                f"{self.base_url}/most-visited-cryptocurrencies/",  # Most visited
+                f"{self.base_url}/recently-added/",  # Recently added
             ]
-
-            trending_section = None
-            for selector in trending_selectors:
-                try:
-                    if selector.startswith('//'):
-                        # XPath selector
-                        trending_section = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((By.XPATH, selector))
-                        )
-                    else:
-                        # CSS selector
-                        trending_section = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                    if trending_section:
-                        self.logger.info("Found trending section")
-                        break
-                except:
-                    continue
-
-            if not trending_section:
-                # Fallback to getting trending from main page
-                self.logger.info("Falling back to main page trending...")
-                self.driver.get(f"{self.base_url}/trending-cryptocurrencies/")
-                random_delay(3, 5)
-                
-                trending_table = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "table"))
+            
+            # Use modulo to cycle through different URL types
+            url_index = (page - 1) % len(page_urls)
+            trending_url = page_urls[url_index]
+            
+            # For pages beyond the basic URLs, add offset parameters
+            if page > len(page_urls):
+                offset = ((page - len(page_urls) - 1) * 50) + 1
+                trending_url += f"&start={offset}&limit=100" if '?' in trending_url else f"?start={offset}&limit=100"
+            
+            print(f"🔥 Using diversified URL approach for page {page}: {trending_url}")
+            
+            # 🔥 BREAKTHROUGH: Navigate using bypass system with automatic proxy switching
+            print(f"🔥 Navigating to CMC trending page via breakthrough bypass...")
+            navigation_success = self._navigate_to_cmc_with_bypass(trending_url)
+            
+            if not navigation_success:
+                print(f"❌ Failed to navigate to CMC after trying multiple proxies")
+                print(f"🔄 The system has automatically:")
+                print(f"   • Tested multiple proxies")
+                print(f"   • Marked failed proxies as unusable")
+                print(f"   • Attempted to discover new proxies")
+                print(f"💡 Try running the bot again - it may find working proxies")
+                return []
+            
+            print(f"✅ Successfully accessed CMC trending page")
+            
+            # Wait for page to stabilize
+            time.sleep(3)
+            
+            # Now try to extract trending coins
+            try:
+                # Wait for table to load
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "table tr"))
                 )
                 
-                trending_coins = []
-                rows = trending_table.find_elements(By.CSS_SELECTOR, "tbody tr")
+                # Get table rows
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
                 
-                for row in rows[:limit]:
+                if not rows:
+                    self.logger.error("Could not find trending coins table")
+                    return []
+                
+                print(f"📊 Found {len(rows)} coin rows on page {page}")
+                
+                # Extract coin data from each row
+                for i, row in enumerate(rows):
+                    if len(trending_coins) >= limit:
+                        break
+                        
                     try:
-                        # Get the coin link to extract URL
-                        coin_link = row.find_element(By.CSS_SELECTOR, "td:nth-child(3) a")
-                        coin_url = coin_link.get_attribute('href')
-                        
-                        name_element = row.find_element(By.CSS_SELECTOR, "td:nth-child(3)")
-                        symbol = name_element.find_element(By.CSS_SELECTOR, "p").text
-                        name = name_element.text.replace(symbol, '').strip()
-                        price = row.find_element(By.CSS_SELECTOR, "td:nth-child(4)").text
-                        change = row.find_element(By.CSS_SELECTOR, "td:nth-child(5)").text.strip('%')
-                        
-                        trending_coins.append({
-                            'name': name,
-                            'symbol': symbol,
-                            'price': price,
-                            'change_24h': change,
-                            'url': coin_url
-                        })
-                        
+                        coin_data = self._extract_coin_from_row(row, i + 1)
+                        if coin_data:
+                            trending_coins.append(coin_data)
+                            print(f"✅ Extracted: {coin_data['name']} (${coin_data['symbol']})")
                     except Exception as e:
-                        self.logger.error(f"Error parsing coin row: {str(e)}")
+                        self.logger.warning(f"Error extracting coin from row {i}: {str(e)}")
                         continue
-                        
-                return trending_coins[:limit]
-
-            # Get trending coins from community
-            trending_coins = []
-            coin_elements = trending_section.find_elements(
-                By.CSS_SELECTOR, 
-                'a[href*="/currencies/"], a[href*="/token/"]'
-            )
-            
-            self.logger.info(f"Found {len(coin_elements)} coin elements")
-            
-            for coin in coin_elements[:limit]:
+                
+                print(f"📈 Successfully extracted {len(trending_coins)} trending coins from page {page}")
+                return trending_coins
+                
+            except Exception as extraction_error:
+                print(f"❌ Error extracting coins from page: {str(extraction_error)}")
+                
+                # Enhanced proxy issue detection by analyzing page content
                 try:
-                    # Get the coin URL
-                    coin_url = coin.get_attribute('href')
+                    page_source = self.driver.page_source.lower()
+                    page_title = self.driver.title.lower()
+                    current_url = self.driver.current_url.lower()
                     
-                    # Try different ways to get coin info
-                    try:
-                        name = coin.get_attribute('title')
-                        if not name:
-                            name = coin.text.split('$')[0].strip()
-                    except:
-                        name = coin.text.split('$')[0].strip()
+                    print(f"🔍 Analyzing page content for proxy issues...")
+                    print(f"   📄 Page title: {page_title[:50]}...")
+                    print(f"   🔗 Current URL: {current_url[:50]}...")
                     
-                    try:
-                        symbol = coin.text.split('$')[1].strip()
-                    except:
-                        symbol = coin.text.strip('$')
+                    # Comprehensive proxy/tunnel error detection
+                    proxy_tunnel_errors = [
+                        "err_tunnel_connection_failed",
+                        "err_proxy_connection_failed", 
+                        "err_timed_out",
+                        "err_connection_timed_out",
+                        "err_connection_refused",
+                        "err_address_unreachable",
+                        "tunnel connection failed",
+                        "proxy connection failed",
+                        "502 bad gateway",
+                        "503 service unavailable",
+                        "504 gateway timeout",
+                        "connection timed out",
+                        "this site can't be reached",
+                        "took too long to respond"
+                    ]
                     
-                    # Navigate to the coin page to get price data
-                    self.driver.execute_script(f"window.open('{coin_url}', '_blank');")
-                    random_delay(1, 2)
+                    # Check for explicit proxy errors
+                    has_proxy_error = any(error in page_source for error in proxy_tunnel_errors)
+                    has_title_error = any(error in page_title for error in proxy_tunnel_errors)
                     
-                    # Switch to new tab
-                    self.driver.switch_to.window(self.driver.window_handles[-1])
-                    random_delay(2, 3)
+                    # Check for insufficient CMC content (indicates blocked/filtered page)
+                    cmc_content_indicators = [
+                        "coinmarketcap",
+                        "cryptocurrency", 
+                        "bitcoin",
+                        "ethereum",
+                        "market cap",
+                        "trending",
+                        "price",
+                        "trading volume"
+                    ]
                     
-                    # Get price data
-                    try:
-                        price = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((
-                                By.CSS_SELECTOR, 
-                                '[data-testid="price-value"], .priceValue'
-                            ))
-                        ).text
-                    except:
-                        price = "N/A"
+                    cmc_indicators_found = sum(1 for indicator in cmc_content_indicators if indicator in page_source)
+                    insufficient_content = cmc_indicators_found < 3
                     
-                    try:
-                        change = self.driver.find_element(
-                            By.CSS_SELECTOR, 
-                            '[data-testid="24h-price-change"], .priceChange'
-                        ).text.strip('%')
-                    except:
-                        change = "0"
+                    # Check for wrong page/redirects
+                    wrong_page = (
+                        "login" in current_url or 
+                        "portfolio-tracker" in current_url or
+                        "404" in page_title or
+                        "not found" in page_title
+                    )
                     
-                    trending_coins.append({
-                        'name': name,
-                        'symbol': symbol,
-                        'price': price,
-                        'change_24h': change,
-                        'url': coin_url
-                    })
+                    print(f"   🔍 Proxy error detected: {has_proxy_error or has_title_error}")
+                    print(f"   📊 CMC content indicators: {cmc_indicators_found}/8 found")
+                    print(f"   🚪 Wrong page detected: {wrong_page}")
                     
-                    # Close tab and switch back
-                    self.driver.close()
-                    self.driver.switch_to.window(self.driver.window_handles[0])
-                    random_delay(1, 2)
+                    is_proxy_issue = has_proxy_error or has_title_error or insufficient_content or wrong_page
                     
-                except Exception as e:
-                    self.logger.error(f"Error getting coin data: {str(e)}")
-                    # Make sure we're back on the main tab
-                    if len(self.driver.window_handles) > 1:
-                        self.driver.close()
-                        self.driver.switch_to.window(self.driver.window_handles[0])
-                    continue
-
-            self.logger.info(f"Successfully gathered {len(trending_coins)} trending coins")
-            return trending_coins[:limit]
-
+                    if is_proxy_issue:
+                        print(f"🔍 PROXY ISSUE CONFIRMED: Page content indicates proxy failure")
+                        if has_proxy_error or has_title_error:
+                            print(f"   ❌ Explicit proxy/tunnel errors found")
+                        if insufficient_content:
+                            print(f"   ❌ Insufficient CMC content (possible blocking/filtering)")
+                        if wrong_page:
+                            print(f"   ❌ Wrong page/redirect detected")
+                        
+                        print(f"🔄 Current proxy failed after initial connection - triggering automatic switch")
+                        
+                        # Get current proxy for marking as failed
+                        current_proxy = None
+                        if hasattr(self.driver, '_enterprise_proxy_configured') and self.driver._enterprise_proxy_configured:
+                            current_proxy = getattr(self.driver, '_enterprise_working_proxy', None)
+                        elif hasattr(self.driver, '_cmc_proxy_configured') and self.driver._cmc_proxy_configured:
+                            current_proxy = getattr(self.driver, '_cmc_working_proxy', None)
+                        
+                        if current_proxy:
+                            print(f"🗑️ Marking proxy {current_proxy} as failed due to content validation failure")
+                            
+                            # Mark failed in both systems
+                            if hasattr(self.profile_manager, 'enterprise_proxy'):
+                                self.profile_manager.enterprise_proxy.mark_proxy_failed(
+                                    current_proxy, f"Content validation failed: {cmc_indicators_found}/8 CMC indicators"
+                                )
+                            if hasattr(self.profile_manager, 'anti_detection'):
+                                self.profile_manager.anti_detection.mark_proxy_failed(current_proxy)
+                        
+                        # Try to switch to a new proxy and retry (max 2 retries to avoid infinite loops)
+                        retry_count = getattr(self, '_content_validation_retries', 0)
+                        if retry_count < 2:
+                            self._content_validation_retries = retry_count + 1
+                            print(f"🔄 Attempting automatic proxy switch and retry (attempt {retry_count + 1}/2)...")
+                            
+                            try:
+                                # Switch to new proxy system
+                                if hasattr(self.profile_manager, 'load_profile_with_enterprise_proxy'):
+                                    print("🗂️ Switching to new proxy via enterprise system...")
+                                    new_driver = self.profile_manager.load_profile_with_enterprise_proxy()
+                                elif hasattr(self.profile_manager, 'load_profile_with_cmc_bypass'):
+                                    print("🔥 Switching to new proxy via CMC bypass system...")
+                                    new_driver = self.profile_manager.load_profile_with_cmc_bypass()
+                                else:
+                                    print("🔄 Switching to next profile...")
+                                    new_driver = self.profile_manager.switch_to_next_profile()
+                                
+                                if new_driver:
+                                    # Close old driver
+                                    try:
+                                        self.driver.quit()
+                                    except:
+                                        pass
+                                    
+                                    self.driver = new_driver
+                                    
+                                    # Check what proxy we got
+                                    new_proxy = "unknown"
+                                    if hasattr(self.driver, '_enterprise_proxy_configured') and self.driver._enterprise_proxy_configured:
+                                        new_proxy = getattr(self.driver, '_enterprise_working_proxy', 'unknown')
+                                        print(f"✅ Switched to new enterprise proxy: {new_proxy}")
+                                    elif hasattr(self.driver, '_cmc_proxy_configured') and self.driver._cmc_proxy_configured:
+                                        new_proxy = getattr(self.driver, '_cmc_working_proxy', 'unknown')
+                                        print(f"✅ Switched to new CMC bypass proxy: {new_proxy}")
+                                    else:
+                                        print("✅ Switched to new profile (direct connection)")
+                                    
+                                    print(f"🔄 Retrying coin extraction with new proxy system...")
+                                    
+                                    # Retry navigation with new proxy
+                                    if self._navigate_to_cmc_with_bypass(trending_url):
+                                        time.sleep(3)
+                                        
+                                        # Retry extraction with new proxy
+                                        try:
+                                            WebDriverWait(self.driver, 15).until(
+                                                EC.presence_of_element_located((By.CSS_SELECTOR, "table tr"))
+                                            )
+                                            
+                                            rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
+                                            if rows:
+                                                print(f"✅ Retry successful: Found {len(rows)} coin rows with new proxy")
+                                                for i, row in enumerate(rows):
+                                                    if len(trending_coins) >= limit:
+                                                        break
+                                                    try:
+                                                        coin_data = self._extract_coin_from_row(row, i + 1)
+                                                        if coin_data:
+                                                            trending_coins.append(coin_data)
+                                                            print(f"✅ Retry extracted: {coin_data['name']} (${coin_data['symbol']})")
+                                                    except Exception as retry_e:
+                                                        self.logger.warning(f"Retry error extracting coin from row {i}: {str(retry_e)}")
+                                                        continue
+                                                
+                                                print(f"🎯 RETRY SUCCESS: Extracted {len(trending_coins)} coins with new proxy!")
+                                                # Reset retry counter on success
+                                                self._content_validation_retries = 0
+                                                return trending_coins
+                                            else:
+                                                print("❌ Retry failed: No coin rows found with new proxy")
+                                        except Exception as retry_extract_error:
+                                            print(f"❌ Retry extraction failed: {str(retry_extract_error)}")
+                                    else:
+                                        print("❌ Retry navigation failed with new proxy")
+                                else:
+                                    print("❌ Failed to load new profile/proxy")
+                                    
+                            except Exception as retry_error:
+                                print(f"❌ Automatic proxy switch failed: {str(retry_error)}")
+                        else:
+                            print(f"⚠️ Maximum retry attempts reached (2/2) - stopping automatic retries")
+                            # Reset counter for next operation
+                            self._content_validation_retries = 0
+                    else:
+                        print(f"ℹ️ Page content appears normal - extraction error may be due to page structure changes")
+                    
+                except Exception as check_error:
+                    print(f"❌ Error during content analysis: {str(check_error)}")
+                
+                return trending_coins  # Return whatever we managed to extract
+                
         except Exception as e:
+            print(f"❌ Critical error in get_trending_coins: {str(e)}")
+            
+            # Log the error but also try to recover
             self.logger.error(f"Error getting trending coins: {str(e)}")
+            
+            # If we have enterprise proxy manager, mark current proxy as problematic
+            current_proxy = None
+            if hasattr(self.driver, '_enterprise_proxy_configured') and self.driver._enterprise_proxy_configured:
+                current_proxy = getattr(self.driver, '_enterprise_working_proxy', None)
+            elif hasattr(self.driver, '_cmc_proxy_configured') and self.driver._cmc_proxy_configured:
+                current_proxy = getattr(self.driver, '_cmc_working_proxy', None)
+            
+            if current_proxy and hasattr(self.profile_manager, 'enterprise_proxy'):
+                print(f"🗑️ Marking proxy {current_proxy} as problematic due to critical error")
+                self.profile_manager.enterprise_proxy.mark_proxy_failed(
+                    current_proxy, f"Critical error: {str(e)}"
+                )
+            
             return []
+
+    def _extract_coin_from_row(self, row, row_index: int):
+        """Extract coin data from a table row"""
+        try:
+            # Get the coin link and name (usually in 2nd or 3rd column)
+            name_cell = None
+            coin_link = None
+            
+            # Try different column positions for the name cell
+            for col_index in [2, 3]:
+                try:
+                    name_cell = row.find_element(By.CSS_SELECTOR, f"td:nth-child({col_index})")
+                    coin_link = name_cell.find_element(By.CSS_SELECTOR, "a[href*='/currencies/']")
+                    break
+                except:
+                    continue
+            
+            if not coin_link:
+                self.logger.warning(f"Could not find coin link in row {row_index}, skipping...")
+                return None
+                
+            coin_url = coin_link.get_attribute('href')
+            
+            # Extract symbol and name with better error handling
+            try:
+                # Try to find symbol element (usually has smaller text)
+                symbol_elements = name_cell.find_elements(By.CSS_SELECTOR, "p, span")
+                symbol = ""
+                name = ""
+                
+                # Extract text from all elements and clean it
+                all_text = name_cell.text.strip().replace('\n', ' ').replace('\r', ' ')
+                link_text = coin_link.text.strip().replace('\n', ' ').replace('\r', ' ')
+                
+                # Try to identify symbol (usually shorter, uppercase, or last element)
+                for elem in symbol_elements:
+                    elem_text = elem.text.strip().replace('\n', ' ').replace('\r', ' ')
+                    if elem_text and len(elem_text) <= 6 and elem_text.isupper():
+                        symbol = elem_text
+                        break
+                
+                # If no symbol found from elements, try to extract from text patterns
+                if not symbol:
+                    # Try to find symbol pattern in the text
+                    import re
+                    # Look for uppercase words of 2-6 characters
+                    symbol_match = re.search(r'\b([A-Z]{2,6})\b', all_text)
+                    if symbol_match:
+                        symbol = symbol_match.group(1)
+                    elif link_text:
+                        # Use the last word from link text as fallback
+                        words = link_text.split()
+                        symbol = words[-1] if words else "UNKNOWN"
+                
+                # Extract name (remove symbol from full text)
+                if symbol and symbol in all_text:
+                    name = all_text.replace(symbol, '').strip()
+                elif link_text:
+                    name = link_text.strip()
+                else:
+                    name = all_text
+                
+                # Clean up extracted values
+                symbol = ' '.join(symbol.split()) if symbol else "UNKNOWN"
+                name = ' '.join(name.split()) if name else symbol
+                
+                # Validate symbol (must be alphanumeric and reasonable length)
+                if not symbol or len(symbol) < 1 or len(symbol) > 10 or not any(c.isalnum() for c in symbol):
+                    # Try to extract from URL as last resort
+                    url_parts = coin_url.split('/')
+                    if len(url_parts) > 2:
+                        url_symbol = url_parts[-2].replace('-', '').upper()
+                        if url_symbol and len(url_symbol) <= 10:
+                            symbol = url_symbol[:6]  # Limit to 6 chars
+                        else:
+                            symbol = f"COIN{row_index}"
+                    else:
+                        symbol = f"COIN{row_index}"
+                
+                # Final validation
+                if not name or name == symbol:
+                    name = symbol
+                    
+            except Exception as e:
+                self.logger.error(f"Error extracting coin info from row {row_index}: {str(e)}")
+                # Emergency fallback
+                symbol = f"COIN{row_index}"
+                name = f"Unknown Coin {row_index}"
+            
+            # Get price (usually 4th column)
+            try:
+                price_cell = row.find_element(By.CSS_SELECTOR, "td:nth-child(4)")
+                price = price_cell.text.strip()
+            except:
+                price = "N/A"
+            
+            # Get 24h change (usually 5th column)
+            try:
+                change_cell = row.find_element(By.CSS_SELECTOR, "td:nth-child(5)")
+                change = change_cell.text.strip().replace('%', '')
+            except:
+                change = "0"
+            
+            return {
+                'name': name,
+                'symbol': symbol,
+                'price': price,
+                'change_24h': change,
+                'url': coin_url,
+                'rank_on_page': row_index
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error extracting coin from row {row_index}: {str(e)}")
+            return None
 
     def get_coin_discussions(self, coin_symbol):
         """Get discussions for a specific coin"""
         try:
             self.logger.info(f"Getting discussions for {coin_symbol}...")
             # First get the coin's page
-            self.driver.get(f"{self.base_url}/currencies/{coin_symbol}/")
+            self._navigate_to_cmc_with_bypass(f"{self.base_url}/currencies/{coin_symbol}/")
             random_delay(3, 7)
 
             # Wait for and click the Community tab
@@ -355,256 +1208,643 @@ class CMCScraper:
             self.logger.error(f"Error getting discussions: {str(e)}")
             return []
 
+    def _analyze_page_source(self, driver):
+        """Analyze page source to find potential question areas"""
+        try:
+            # Get page source
+            page_source = driver.page_source
+            
+            # Look for common patterns that indicate where questions might be
+            patterns = [
+                'class="[^"]*question[^"]*"',
+                'class="[^"]*ai[^"]*"',
+                'class="[^"]*analysis[^"]*"',
+                'role="button"[^>]*>.*?why.*?</button>',
+                'role="button"[^>]*>.*?what.*?</button>',
+                'button[^>]*>.*?\\?.*?</button>'
+            ]
+            
+            matches = []
+            for pattern in patterns:
+                matches.extend(re.finditer(pattern, page_source, re.IGNORECASE))
+            
+            if matches:
+                # Get all elements matching these patterns
+                elements = []
+                for match in matches:
+                    try:
+                        # Try to find the actual element using the matched text
+                        matched_text = match.group(0)
+                        # Create an XPath that matches elements containing this class or text
+                        if 'class=' in matched_text:
+                            class_name = re.search('class="([^"]*)"', matched_text).group(1)
+                            xpath = f"//*[contains(@class, '{class_name}')]"
+                        else:
+                            # For text content matches, escape quotes and create appropriate XPath
+                            text_content = re.search('>([^<]*)<', matched_text)
+                            if text_content:
+                                text = text_content.group(1)
+                                xpath = f"//*[contains(text(), '{text}')]"
+                            else:
+                                continue
+                        
+                        # Find elements matching this XPath
+                        found_elements = driver.find_elements(By.XPATH, xpath)
+                        elements.extend(found_elements)
+                    except:
+                        continue
+                
+                return elements
+        except Exception as e:
+            self.logger.debug(f"Error analyzing page source: {str(e)}")
+        return []
+
     def find_ai_button(self, driver):
-        """Smart AI button detection that looks for AI question prompts"""
-        self.logger.info("🔍 Looking for AI question prompts...")
+        """Find the AI button/question on the page"""
+        self.logger.info("Looking for AI question prompts...")
         
-        # Strategy 1: Look for elements near the price section first
+        # 🔧 FOCUS FIX: Force browser window to foreground and simulate user interaction
         try:
-            # Find the price value element
-            price_elements = driver.find_elements(By.CSS_SELECTOR, 
-                '[data-testid="price-value"], .priceValue, [class*="price"]')
+            print("🔧 FOCUS FIX: Bringing browser to foreground...")
             
-            for price_elem in price_elements:
-                if not price_elem.is_displayed():
-                    continue
-                    
-                # Look for questions in the same general area
-                try:
-                    # Get common ancestor and look for questions
-                    ancestor = price_elem.find_element(By.XPATH, "./ancestor::div[4]")  # Go up 4 levels
-                    questions = ancestor.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
-                    
-                    for q in questions:
-                        text = q.text.strip()
-                        # Filter out unwanted questions and verify it's a proper AI question
-                        if (q.is_displayed() and 
-                            q.is_enabled() and 
-                            len(text) > 10 and
-                            text.count('?') == 1 and
-                            not any(unwanted in text.lower() for unwanted in [
-                                "do you own", "forgot", "need help", "what is", "have you seen"
-                            ]) and
-                            any(word in text.lower() for word in [
-                                "why is", "what could", "how does", "will the"
-                            ])):
-                            self.logger.info(f"✅ Found AI question near price: '{text}'")
-                            return q
-                except:
-                    continue
+            # Force window to foreground and maximize
+            driver.maximize_window()
+            
+            # Trigger window focus events
+            driver.execute_script("""
+                // Force window focus
+                window.focus();
+                
+                // Trigger focus and visibility events
+                window.dispatchEvent(new Event('focus'));
+                document.dispatchEvent(new Event('visibilitychange'));
+                
+                // Simulate user activity
+                document.dispatchEvent(new Event('mouseenter'));
+                document.dispatchEvent(new Event('mousemove'));
+                
+                // Force page visibility
+                Object.defineProperty(document, 'visibilityState', {
+                    writable: true,
+                    value: 'visible'
+                });
+                Object.defineProperty(document, 'hidden', {
+                    writable: true,
+                    value: false
+                });
+                
+                console.log('🔧 Browser focused and visibility events triggered');
+            """)
+            
+            # Physical mouse movement simulation
+            from selenium.webdriver.common.action_chains import ActionChains
+            actions = ActionChains(driver)
+            
+            # Move mouse to center of page to simulate user presence
+            viewport_width = driver.execute_script("return window.innerWidth")
+            viewport_height = driver.execute_script("return window.innerHeight")
+            actions.move_by_offset(viewport_width // 2, viewport_height // 2).perform()
+            
+            print("✅ Browser focused and user interaction simulated")
+            
         except Exception as e:
-            self.logger.debug(f"Price proximity search failed: {str(e)}")
+            print(f"⚠️ Focus fix warning: {e}")
         
-        # Strategy 2: Look for elements with AI-specific classes
-        css_selectors = [
-            "[class*='ai-question']",
-            "[class*='ai-prompt']",
-            "[data-testid*='ai']",
-            "[class*='ai-button']"
-        ]
+        # Wait for initial page load
+        try:
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(3)
+        except:
+            self.logger.warning("Page load timeout, attempting to proceed anyway")
+
+        # Get coin name from the page title
+        try:
+            coin_name = driver.find_element(By.TAG_NAME, "h1").text.split("$")[0].strip()
+            self.logger.info(f"Looking for questions about {coin_name}")
+        except:
+            coin_name = ""
+            self.logger.warning("Could not get coin name from title")
         
-        for css in css_selectors:
+        # FIRST: Try to find AI questions without scrolling (they might already be visible)
+        self.logger.info("Trying to find AI questions without scrolling first...")
+        result = self._search_for_ai_questions(driver, "initial check")
+        if result:
+            self.logger.info("Found AI questions without needing to scroll!")
+            return result
+
+        # FIXED: Better scrolling strategy - avoid header and search areas
+        # Get page height for scrolling but be more targeted
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        viewport_height = driver.execute_script("return window.innerHeight")
+        
+        # Start scrolling after the header area (skip top 200px to avoid search bar)
+        start_scroll = 200
+        # FIXED: Expand search range to cover more of the page where AI questions are typically located
+        # AI questions are usually in the middle/lower section of the page
+        max_scroll = min(total_height * 0.8, total_height - 100)  # Search up to 80% of page height
+        scroll_step = viewport_height // 6  # Smaller steps to avoid missing questions (was // 3)
+        
+        self.logger.info(f"Scrolling search: start={start_scroll}, max={max_scroll}, step={scroll_step}, total_height={total_height}")
+        
+        # First, scroll to start position to avoid header/search areas
+        driver.execute_script(f"window.scrollTo(0, {start_scroll});")
+        time.sleep(1)
+        
+        for scroll_pos in range(start_scroll, int(max_scroll), scroll_step):
+            # 🔧 FOCUS FIX: Trigger user activity before each scroll
             try:
-                elements = driver.find_elements(By.CSS_SELECTOR, css)
-                for elem in elements:
-                    text = elem.text.strip()
-                    if (elem.is_displayed() and 
-                        elem.is_enabled() and 
-                        "?" in text and
-                        len(text) > 10 and
-                        not "do you own" in text.lower()):
-                        self.logger.info(f"✅ Found AI question by class: '{text}'")
-                        return elem
+                driver.execute_script("""
+                    // Trigger user activity events before scrolling
+                    window.focus();
+                    document.dispatchEvent(new Event('mousemove'));
+                    document.dispatchEvent(new Event('scroll'));
+                """)
             except:
-                continue
-        
-        # Strategy 3: Look for questions near "CMC AI" text
-        try:
-            # Find CMC AI text elements
-            ai_elements = driver.find_elements(By.XPATH, "//*[contains(text(), 'CMC AI')]")
+                pass
             
-            for ai_elem in ai_elements:
-                if not ai_elem.is_displayed():
-                    continue
-                    
-                # Look for questions in siblings and nearby elements
-                try:
-                    # Look in siblings first
-                    parent = ai_elem.find_element(By.XPATH, "./..")
-                    questions = parent.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
-                    
-                    for q in questions:
-                        text = q.text.strip()
-                        if (q.is_displayed() and 
-                            q.is_enabled() and 
-                            len(text) > 10 and
-                            text.count('?') == 1 and
-                            not "do you own" in text.lower()):
-                            self.logger.info(f"✅ Found question near CMC AI: '{text}'")
-                            return q
-                            
-                    # If not found in siblings, look in nearby elements
-                    ancestor = ai_elem.find_element(By.XPATH, "./ancestor::div[3]")
-                    questions = ancestor.find_elements(By.XPATH, ".//*[contains(text(), '?')]")
-                    
-                    for q in questions:
-                        text = q.text.strip()
-                        if (q.is_displayed() and 
-                            q.is_enabled() and 
-                            len(text) > 10 and
-                            text.count('?') == 1 and
-                            not "do you own" in text.lower()):
-                            self.logger.info(f"✅ Found question near CMC AI: '{text}'")
-                            return q
-                except:
-                    continue
-        except Exception as e:
-            self.logger.debug(f"CMC AI proximity search failed: {str(e)}")
-        
-        self.logger.warning("❌ No AI question prompts found")
+            # FIXED: Use smooth scrolling to avoid jarring movements
+            driver.execute_script(f"""
+                window.scrollTo({{
+                    top: {scroll_pos},
+                    behavior: 'smooth'
+                }});
+                
+                // 🔧 FOCUS FIX: Trigger additional events after scroll
+                setTimeout(() => {{
+                    window.dispatchEvent(new Event('scroll'));
+                    document.dispatchEvent(new Event('mouseenter'));
+                }}, 100);
+            """)
+            time.sleep(2)  # Increased wait time for smooth scrolling
+            
+            self.logger.info(f"Searching at scroll position: {scroll_pos}px")
+            
+            # Try to find AI questions at this scroll position
+            result = self._search_for_ai_questions(driver, f"scroll position {scroll_pos}")
+            if result:
+                self.logger.info(f"Found AI questions at scroll position {scroll_pos}px!")
+                return result
+
+        self.logger.warning("No question spans found after comprehensive search")
         return None
 
-    def find_and_click_ai_button(self, driver, max_attempts=3):
-        """Enhanced method to find and click AI button with multiple strategies"""
-        for attempt in range(max_attempts):
+    def _search_for_ai_questions(self, driver, context=""):
+        """Helper method to search for AI questions at current scroll position"""
+        try:
+            self.logger.debug(f"Searching for AI questions ({context})")
+            
+            # 🔧 FOCUS FIX: Trigger focus events before searching
             try:
-                # First try without scrolling
-                ai_button = self.find_ai_button(driver)
-                if ai_button:
-                    try:
-                        # 1. Scroll element into center view
-                        driver.execute_script(
-                            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
-                            ai_button
-                        )
-                        time.sleep(1)
-                        
-                        # 2. Ensure element is clickable
-                        driver.execute_script("""
-                            arguments[0].style.position = 'relative';
-                            arguments[0].style.opacity = '1';
-                            arguments[0].style.zIndex = '999999';
-                        """, ai_button)
-                        
-                        # 3. Try direct click
-                        ai_button.click()
-                        self.logger.info("✅ Clicked AI button successfully")
-                        return True
-                    except:
-                        pass
-                
-                # If direct click failed, try different scroll positions
-                scroll_positions = [0.2, 0.4, 0.6, 0.8]
-                for scroll_pos in scroll_positions:
-                    self.logger.info(f"Trying scroll position {int(scroll_pos * 100)}%...")
+                driver.execute_script("""
+                    // Aggressive focus and visibility triggers
+                    window.focus();
+                    document.body.focus();
                     
-                    # Scroll and wait
-                    driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight * {scroll_pos});")
+                    // Trigger multiple user activity events
+                    ['focus', 'mouseenter', 'mousemove', 'scroll', 'click'].forEach(event => {
+                        window.dispatchEvent(new Event(event, { bubbles: true }));
+                        document.dispatchEvent(new Event(event, { bubbles: true }));
+                    });
+                    
+                    // Force visibility state
+                    Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
+                    Object.defineProperty(document, 'hidden', { value: false, writable: true });
+                """)
+            except:
+                pass
+            
+            # ENHANCED: Look for AI-related elements with better filtering
+            spans = driver.execute_script("""
+                function findSpans() {
+                    // First trigger more user events to ensure content loads
+                    window.focus();
+                    document.dispatchEvent(new Event('DOMContentLoaded'));
+                    
+                    const spans = document.getElementsByTagName('span');
+                    return Array.from(spans).filter(span => {
+                        if (!span.offsetParent) return false;  // Skip hidden elements
+                        
+                        const text = span.textContent.toLowerCase().trim();
+                        // Look for AI question patterns
+                        const hasQuestionPattern = (
+                            (text.includes('why is') && text.includes('price')) ||
+                            (text.includes('what') && text.includes('price')) ||
+                            (text.includes('how') && text.includes('price')) ||
+                            text.includes('ai analysis') ||
+                            text.includes('cmc ai')
+                        );
+                        
+                        if (!hasQuestionPattern) return false;
+                        
+                        // Make sure it's in the viewport and not in header/footer
+                        const rect = span.getBoundingClientRect();
+                        const isInViewport = rect.top >= 50 && rect.bottom <= window.innerHeight - 50;
+                        const isInMainContent = rect.top > 100; // Avoid header area
+                        
+                        return isInViewport && isInMainContent &&
+                               span.parentElement && 
+                               span.parentElement.parentElement;
+                    });
+                }
+                return findSpans();
+            """)
+            
+            for span in spans:
+                if span.is_displayed() and span.is_enabled():
+                    text = span.text.strip()
+                    self.logger.info(f"Found question span ({context}): {text}")
+                    return span
+
+            # ENHANCED: More targeted XPath searches
+            xpaths = [
+                "//main//span[contains(text(), 'Why is') and contains(text(), 'price')]",
+                "//div[contains(@class, 'content')]//span[contains(text(), 'Why is')]",
+                "//div[contains(@class, 'price')]//following-sibling::*//span[contains(text(), 'Why is')]",
+                "//h1[contains(text(), '$')]/following::div[position()<=15]//span[contains(text(), 'Why is')]",
+                "//span[contains(text(), 'AI') and contains(text(), 'analysis')]",
+                "//span[contains(text(), 'CMC AI')]",
+                "//span[starts-with(text(), 'Why is') and contains(text(), '?')]",
+                "//span[starts-with(text(), 'What') and contains(text(), '?')]"
+            ]
+            
+            for xpath in xpaths:
+                try:
+                    elements = driver.find_elements(By.XPATH, xpath)
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            # FIXED: Better viewport detection - more lenient for broader search
+                            in_viewport = driver.execute_script("""
+                                const rect = arguments[0].getBoundingClientRect();
+                                const isVisible = rect.top >= 50 &&
+                                       rect.left >= 0 &&
+                                                 rect.bottom <= window.innerHeight - 50 &&
+                                       rect.right <= window.innerWidth;
+                                const isInMainContent = rect.top > 100; // Avoid header
+                                return isVisible && isInMainContent;
+                            """, element)
+                            
+                            if in_viewport:
+                                text = element.text.strip()
+                                if ('price' in text.lower() and '?' in text) or 'ai' in text.lower():
+                                    self.logger.info(f"Found via XPath ({context}): {text}")
+                                    return element
+                except Exception as e:
+                    self.logger.debug(f"XPath {xpath} failed: {str(e)}")
+                    continue
+
+        except Exception as e:
+            self.logger.debug(f"Error in search ({context}): {str(e)}")
+        
+        return None
+
+    def find_and_click_ai_button(self, driver):
+        """Find and click the AI button with retries"""
+        max_attempts = 3
+        
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                self.logger.info(f"Retry attempt {attempt + 1}...")
+                # Refresh page on retry
+                driver.refresh()
+                time.sleep(3)
+            
+            try:
+                # Try to find AI button
+                span = self.find_ai_button(driver)
+                if span:
+                    # Get the clickable parent div
+                    clickable = driver.execute_script("""
+                        function getClickableParent(element) {
+                            // Try to find the closest clickable parent
+                            let current = element;
+                            while (current && current.tagName !== 'BODY') {
+                                // Check if this element has click handlers
+                                const clickable = current.onclick || 
+                                               current.getAttribute('role') === 'button' ||
+                                               current.tagName === 'BUTTON' ||
+                                               window.getComputedStyle(current).cursor === 'pointer';
+                                               
+                                if (clickable) return current;
+                                current = current.parentElement;
+                            }
+                            return element.parentElement || element;  // Fallback to direct parent
+                        }
+                        return getClickableParent(arguments[0]);
+                    """, span)
+                    
+                    if not clickable:
+                        clickable = span
+                    
+                    # Make sure the element is in view
+                    driver.execute_script("""
+                        const element = arguments[0];
+                        const elementRect = element.getBoundingClientRect();
+                        
+                        // If element is not fully visible, scroll it into center view
+                        if (elementRect.top < 0 || elementRect.bottom > window.innerHeight) {
+                            const absoluteElementTop = elementRect.top + window.pageYOffset;
+                            const middle = absoluteElementTop - (window.innerHeight / 2);
+                            window.scrollTo(0, middle);
+                        }
+                    """, clickable)
                     time.sleep(1)
                     
-                    # Try to find and click button
-                    ai_button = self.find_ai_button(driver)
-                    if ai_button:
+                    # 🔧 FOCUS FIX: Aggressive user simulation before clicking
+                    try:
+                        print("🔧 FOCUS FIX: Simulating aggressive user interaction before clicking...")
+                        
+                        # Force focus and trigger multiple events
+                        driver.execute_script("""
+                            // Aggressive user simulation
+                            window.focus();
+                            document.body.focus();
+                            
+                            // Scroll to element to ensure it's in view
+                            arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            
+                            // Trigger comprehensive user events
+                            const events = ['focus', 'mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click', 'DOMContentLoaded'];
+                            events.forEach(eventType => {
+                                const event = new Event(eventType, { bubbles: true, cancelable: true });
+                                window.dispatchEvent(event);
+                                document.dispatchEvent(event);
+                                arguments[0].dispatchEvent(event);
+                            });
+                            
+                            // Force visibility
+                            Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: true });
+                            Object.defineProperty(document, 'hidden', { value: false, writable: true });
+                            
+                            // Simulate mouse movement to element
+                            const rect = arguments[0].getBoundingClientRect();
+                            const mouseEvent = new MouseEvent('mousemove', {
+                                clientX: rect.left + rect.width / 2,
+                                clientY: rect.top + rect.height / 2,
+                                bubbles: true
+                            });
+                            document.dispatchEvent(mouseEvent);
+                            
+                            console.log('🔧 Aggressive user interaction simulated');
+                        """, clickable)
+                        
+                        # Physical mouse movement to element
+                        from selenium.webdriver.common.action_chains import ActionChains
+                        actions = ActionChains(driver)
+                        actions.move_to_element(clickable).perform()
+                        
+                        time.sleep(2)  # Give time for events to process
+                        print("✅ User interaction simulation completed")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Focus fix warning during clicking: {e}")
+                    
+                    # ENHANCED: Try multiple clicking strategies
+                    click_strategies = [
+                        lambda: clickable.click(),  # Standard click
+                        lambda: driver.execute_script("arguments[0].click();", clickable),  # JavaScript click
+                        lambda: driver.execute_script("""
+                            // Force click with events
+                            const element = arguments[0];
+                            element.focus();
+                                ['mousedown', 'mouseup', 'click'].forEach(eventType => {
+                                    const event = new MouseEvent(eventType, {
+                                        view: window,
+                                        bubbles: true,
+                                        cancelable: true,
+                                        buttons: 1
+                                    });
+                                    element.dispatchEvent(event);
+                                });
+                        """, clickable)  # Force event dispatch
+                    ]
+                    
+                    for i, strategy in enumerate(click_strategies):
                         try:
-                            # Try multiple click methods
-                            try:
-                                # Method 1: Direct click
-                                ai_button.click()
-                                self.logger.info("✅ Clicked using direct click")
+                            print(f"🎯 Trying click strategy {i + 1}...")
+                            strategy()
+                            time.sleep(3)  # Wait for content to start loading
+                            
+                            # ENHANCED: Check for AI content appearance with more indicators
+                            content_appeared = driver.execute_script("""
+                                // Check multiple indicators that AI content loaded
+                                const bodyText = document.body.innerText.toLowerCase();
+                                const hasAIIndicators = 
+                                    bodyText.includes('tldr') || 
+                                    bodyText.includes('thought for') ||
+                                    bodyText.includes('ai analysis') ||
+                                    bodyText.includes('analysis summary') ||
+                                    bodyText.includes('key insights');
+                                
+                                // Also check for new elements in right area
+                                const rightElements = Array.from(document.querySelectorAll('*')).filter(el => {
+                                    const rect = el.getBoundingClientRect();
+                                    return rect.left > window.innerWidth * 0.5 && rect.width > 100;
+                                });
+                                
+                                const hasNewRightContent = rightElements.some(el => {
+                                    const text = el.textContent.toLowerCase();
+                                    return text.includes('tldr') || text.includes('thought for');
+                                });
+                                
+                                return hasAIIndicators || hasNewRightContent;
+                            """)
+                            
+                            if content_appeared:
+                                print(f"✅ AI content appeared after click strategy {i + 1}")
+                                self.logger.info("AI content area appeared after click")
                                 return True
-                            except:
-                                try:
-                                    # Method 2: JavaScript click
-                                    driver.execute_script("arguments[0].click();", ai_button)
-                                    self.logger.info("✅ Clicked using JavaScript")
-                                    return True
-                                except:
-                                    try:
-                                        # Method 3: Action chains
-                                        from selenium.webdriver.common.action_chains import ActionChains
-                                        actions = ActionChains(driver)
-                                        actions.move_to_element(ai_button).click().perform()
-                                        self.logger.info("✅ Clicked using Action Chains")
-                                        return True
-                                    except:
-                                        continue
-                        except:
+                            else:
+                                print(f"⚠️ Click strategy {i + 1} didn't trigger AI content, trying next...")
+                                
+                        except Exception as e:
+                            print(f"❌ Click strategy {i + 1} failed: {str(e)}")
                             continue
-                
-                self.logger.warning(f"Attempt {attempt + 1} failed to click AI button")
-                time.sleep(2)
-                
+                    
+                    # If none of the strategies worked, try one more aggressive approach
+                    print("🔥 Trying aggressive clicking approach...")
+                    try:
+                        # Find all clickable elements near the AI question and click them
+                        driver.execute_script("""
+                            // Find and click any clickable elements containing AI-related text
+                            const allElements = document.querySelectorAll('*');
+                            for (let element of allElements) {
+                                const text = element.textContent.toLowerCase();
+                                if ((text.includes('why is') && text.includes('price')) || 
+                                    text.includes('ai') || 
+                                    text.includes('analysis')) {
+                                    
+                                    const rect = element.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        try {
+                                            element.click();
+                                            console.log('Clicked element:', element);
+                                        } catch (e) {
+                                            // Continue if click fails
+                                        }
+                                    }
+                                }
+                            }
+                        """)
+                        
+                        time.sleep(5)  # Wait longer for aggressive clicking
+                        
+                        # Check again for content
+                        final_check = driver.execute_script("""
+                            const bodyText = document.body.innerText.toLowerCase();
+                            return bodyText.includes('tldr') || bodyText.includes('thought for');
+                        """)
+                        
+                        if final_check:
+                            print("✅ AI content appeared after aggressive clicking")
+                            return True
+                            
+                    except Exception as e:
+                        print(f"❌ Aggressive clicking failed: {str(e)}")
+            
             except Exception as e:
-                self.logger.error(f"Error in click attempt {attempt + 1}: {str(e)}")
-                time.sleep(2)
+                self.logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                continue
         
+        self.logger.warning(f"Failed to click AI element after {max_attempts} attempts")
         return False
 
     def wait_for_ai_content(self, timeout=45):
-        """Enhanced method to wait for and capture AI content"""
+        """Enhanced method to wait for and capture AI content - FIXED for right sidebar"""
         start_time = time.time()
-        previous_content = None
-        content_stable_count = 0
+        
+        print("🤖 FIXED VERSION: Waiting for AI content to load in right sidebar...")
+        print("🔧 Using new stale-element-resistant content detection!")
         
         while time.time() - start_time < timeout:
             try:
-                # Strategy 1: Look for content in right panel
-                right_panel_selectors = [
-                    "//div[contains(@class, 'right-panel')]",
-                    "//div[contains(@class, 'ai-response')]",
-                    "//div[contains(@class, 'ai-content')]",
-                    "//aside",
-                    "//div[@role='complementary']"
-                ]
+                # FIXED: Use fresh element lookups every time to avoid stale references
+                # Strategy 1: Look for content in the right sidebar where AI actually appears
+                print(f"⏳ Checking for AI content... ({int(time.time() - start_time)}s elapsed)")
                 
-                for selector in right_panel_selectors:
-                    elements = self.driver.find_elements(By.XPATH, selector)
-                    for element in elements:
-                        if element.is_displayed():
-                            content = element.text.strip()
+                # Get fresh page source each time
+                page_source = self.driver.page_source
+                
+                # Check if AI content keywords are present in page source
+                ai_indicators = ['TLDR', 'Thought for', 'AI analysis', 'analysis summary', 'key insights']
+                ai_content_present = any(indicator in page_source for indicator in ai_indicators)
+                
+                if ai_content_present:
+                    print("🎯 AI indicators found in page source, locating content...")
+                    
+                    # Strategy 1: Look for right sidebar content with fresh selectors
+                    right_sidebar_selectors = [
+                        "//div[contains(@class, 'right')]//div[contains(text(), 'TLDR') or contains(text(), 'Thought for')]",
+                        "//aside//div[contains(text(), 'TLDR') or contains(text(), 'Thought for')]", 
+                        "//div[@role='complementary']//div[contains(text(), 'TLDR') or contains(text(), 'Thought for')]",
+                        "//*[contains(@class, 'sidebar')]//div[contains(text(), 'TLDR') or contains(text(), 'Thought for')]",
+                        "//*[contains(@class, 'right-panel')]//div[contains(text(), 'TLDR') or contains(text(), 'Thought for')]"
+                    ]
+                    
+                    for selector in right_sidebar_selectors:
+                        try:
+                            # Get fresh elements each time
+                            elements = self.driver.find_elements(By.XPATH, selector)
+                            for element in elements:
+                                try:
+                                    if element.is_displayed():
+                                        # Get the parent container to capture full content
+                                        parent = element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'content') or contains(@class, 'panel') or contains(@class, 'sidebar')][1]")
+                                        content = parent.text.strip()
+                                        
+                                        if len(content) > 50:
+                                            print(f"✅ Found AI content via selector: {content[:100]}...")
+                                            return content
+                                except Exception:
+                                    # Element became stale, continue to next
+                                    continue
+                        except Exception:
+                            continue
+                    
+                    # Strategy 2: Search for AI content in all visible text using JavaScript
+                    try:
+                        ai_content = self.driver.execute_script("""
+                            // Find all text content containing AI indicators
+                            function findAIContent() {
+                                const indicators = ['TLDR', 'Thought for', 'analysis summary', 'key insights'];
+                                const allElements = document.querySelectorAll('*');
+                                
+                                for (let element of allElements) {
+                                    const text = element.textContent;
+                                    if (text && text.length > 100) {
+                                        for (let indicator of indicators) {
+                                            if (text.includes(indicator)) {
+                                                // Check if element is in right area of screen
+                                                const rect = element.getBoundingClientRect();
+                                                const isRightSide = rect.left > window.innerWidth * 0.5;
+                                                const isVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+                                                
+                                                if (isRightSide && isVisible) {
+                                                    return text;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                return null;
+                            }
+                            return findAIContent();
+                        """)
+                        
+                        if ai_content and len(ai_content) > 100:
+                            print(f"✅ Found AI content via JavaScript: {ai_content[:100]}...")
+                            return ai_content
                             
-                            # Check if content is substantial
-                            if len(content) > 100 and ('.' in content or ',' in content):
-                                # Check if content has stabilized (hasn't changed in 2 consecutive checks)
-                                if content == previous_content:
-                                    content_stable_count += 1
-                                    if content_stable_count >= 2:
-                                        self.logger.info(f"✅ Content stabilized after {int(time.time() - start_time)} seconds")
-                                        return content
-                                else:
-                                    content_stable_count = 0
-                                    previous_content = content
+                    except Exception as e:
+                        print(f"❌ JavaScript search failed: {str(e)}")
+                    
+                    # Strategy 3: Look for content by text pattern matching
+                    try:
+                        # Find elements containing TLDR or Thought for
+                        tldr_elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'TLDR')]")
+                        thought_elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Thought for')]")
+                        
+                        all_ai_elements = tldr_elements + thought_elements
+                        
+                        for element in all_ai_elements:
+                            try:
+                                if element.is_displayed():
+                                    # Try to get the container that holds the full content
+                                    containers = [
+                                        element.find_element(By.XPATH, "./ancestor::div[1]"),  # immediate parent
+                                        element.find_element(By.XPATH, "./ancestor::div[2]"),  # grandparent
+                                        element.find_element(By.XPATH, "./ancestor::div[3]"),  # great-grandparent
+                                    ]
+                                    
+                                    for container in containers:
+                                        try:
+                                            content = container.text.strip()
+                                            if len(content) > 100 and ('TLDR' in content or 'Thought for' in content):
+                                                print(f"✅ Found AI content via text pattern: {content[:100]}...")
+                                            return content
+                                        except Exception:
+                                            continue
+                            except Exception:
+                                # Element became stale, continue to next
+                                continue
+                                
+                    except Exception as e:
+                        print(f"❌ Text pattern search failed: {str(e)}")
                 
-                # Strategy 2: Look for any substantial text that might be AI content
-                potential_content = self.driver.find_elements(By.XPATH, 
-                    "//*[string-length(text()) > 100 and (contains(text(), '.') or contains(text(), ','))]")
-                
-                for element in potential_content:
-                    if element.is_displayed():
-                        content = element.text.strip()
-                        if len(content) > 100 and ('.' in content or ',' in content):
-                            if content == previous_content:
-                                content_stable_count += 1
-                                if content_stable_count >= 2:
-                                    self.logger.info(f"✅ Content stabilized after {int(time.time() - start_time)} seconds")
-                                    return content
-                            else:
-                                content_stable_count = 0
-                                previous_content = content
-                
-                # If we haven't found stable content yet, wait a bit
-                if (time.time() - start_time) % 5 < 0.1:
-                    self.logger.info(f"Still waiting for content... {int(time.time() - start_time)} seconds elapsed")
-                time.sleep(0.5)
+                # Wait a bit before next check
+                time.sleep(1)
                 
             except Exception as e:
-                self.logger.error(f"Error while waiting for content: {str(e)}")
-                time.sleep(0.5)
+                print(f"⚠️ Error in content search: {str(e)[:100]}...")
+                time.sleep(1)
+                continue
         
+        print(f"❌ Timeout waiting for AI content after {timeout} seconds")
         return None
 
     def get_ai_token_review(self, coin_symbol: str, coin_name: str, coin_url: str = None) -> dict:
-        """Get AI-generated review for a token from CMC"""
+        """Get AI-generated review for a token from CMC (SCRAPING ONLY - NO POSTING)"""
         try:
             self.logger.info(f"Getting AI review for {coin_name} (${coin_symbol})...")
             
@@ -612,11 +1852,15 @@ class CMCScraper:
             if coin_url:
                 target_url = coin_url
             else:
-                coin_slug = coin_name.lower().replace(' ', '-').replace('(', '').replace(')', '').replace('.', '')
-                target_url = f"{self.base_url}/currencies/{coin_slug}/"
+                # Clean up the coin name for URL
+                coin_slug = coin_name.lower()
+                # Remove special characters and replace spaces with hyphens
+                coin_slug = re.sub(r'[^a-z0-9\s-]', '', coin_slug)
+                coin_slug = re.sub(r'\s+', '-', coin_slug.strip())
+                target_url = f"{self.currencies_url}{coin_slug}/"
             
-            self.logger.info(f"Navigating to: {target_url}")
-            self.driver.get(target_url)
+            self.logger.info(f"🔥 Navigating to CMC via breakthrough bypass: {target_url}")
+            self._navigate_to_cmc_with_bypass(target_url)
             
             # Wait for page load
             self.logger.info("Waiting for page to fully load...")
@@ -624,6 +1868,17 @@ class CMCScraper:
                 lambda driver: driver.execute_script("return document.readyState") == "complete"
             )
             time.sleep(3)  # Additional wait for dynamic content
+            
+            # Verify we're on the correct page
+            current_url = self.driver.current_url
+            if "/portfolio-tracker/" in current_url or "/login/" in current_url:
+                self.logger.error("Redirected to wrong page. Please check login status.")
+                return {
+                    'success': False,
+                    'coin_name': coin_name,
+                    'coin_symbol': coin_symbol,
+                    'error': 'Redirected to wrong page'
+                }
             
             # Try to click AI button
             if not self.find_and_click_ai_button(self.driver):
@@ -637,12 +1892,14 @@ class CMCScraper:
             # Wait for and capture AI content
             content = self.wait_for_ai_content()
             if content:
+                # ONLY return the content - NO POSTING HERE
                 return {
                     'success': True,
                     'coin_name': coin_name,
                     'coin_symbol': coin_symbol,
-                    'ai_review': content,
-                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                    'ai_review': content,  # Raw CMC AI content only
+                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'url_used': target_url
                 }
             else:
                 return {
@@ -659,4 +1916,191 @@ class CMCScraper:
                 'coin_name': coin_name,
                 'coin_symbol': coin_symbol,
                 'error': str(e)
-            } 
+            }
+
+    def _navigate_to_cmc_with_bypass(self, url: str) -> bool:
+        """Navigate to CMC page with respect for proxy configuration"""
+        # Check if user wants direct connection only
+        if not self.proxy_config.get('auto_proxy_rotation', True):
+            print(f"🌐 DIRECT CONNECTION: No proxy rotation (user preference)")
+            return self._navigate_direct_connection_only(url)
+        
+        # Original proxy-enabled navigation logic
+        max_proxy_attempts = 5  # Try up to 5 different proxies
+        attempt = 0
+        
+        while attempt < max_proxy_attempts:
+            attempt += 1
+            current_proxy = None
+            
+            try:
+                # Get current proxy info
+                if hasattr(self.driver, '_enterprise_proxy_configured') and self.driver._enterprise_proxy_configured:
+                    current_proxy = getattr(self.driver, '_enterprise_working_proxy', 'Unknown')
+                    print(f"🌐 Attempt {attempt}: Using proxy {current_proxy}")
+                elif hasattr(self.driver, '_cmc_proxy_configured') and self.driver._cmc_proxy_configured:
+                    current_proxy = getattr(self.driver, '_cmc_working_proxy', 'Unknown')
+                    print(f"🔥 Attempt {attempt}: Using CMC bypass proxy {current_proxy}")
+                else:
+                    print(f"🌐 Attempt {attempt}: Using direct connection")
+                
+                print(f"🔗 Accessing: {url}")
+                
+                # Try navigation with current proxy
+                self.driver.get(url)
+                
+                # Wait for page to load and check for success
+                print("⏳ Waiting for page to load...")
+                time.sleep(5)  # Give page time to load
+                
+                # Check if navigation was successful with enhanced validation
+                if self._validate_cmc_page_load(url):
+                    return True
+                else:
+                    raise Exception("Page validation failed")
+                    
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Attempt {attempt} failed: {error_msg}")
+                
+                # Only try proxy switching if user allowed it
+                if attempt < max_proxy_attempts:
+                    print(f"🔄 Attempting to switch to new working proxy...")
+                    if not self._try_switch_proxy():
+                        break  # No more proxies available
+                    
+                # Add delay before retry
+                if attempt < max_proxy_attempts:
+                    retry_delay = 5 + (attempt * 2)  # Increasing delay
+                    print(f"⏳ Waiting {retry_delay}s before next attempt...")
+                    time.sleep(retry_delay)
+        
+        print(f"❌ All {max_proxy_attempts} proxy attempts failed")
+        return False
+    
+    def _navigate_direct_connection_only(self, url: str) -> bool:
+        """Navigate using direct connection only (no proxy switching)"""
+        try:
+            print(f"🔗 Accessing: {url}")
+            self.driver.get(url)
+            
+            print("⏳ Waiting for page to load...")
+            time.sleep(5)
+            
+            return self._validate_cmc_page_load(url)
+            
+        except Exception as e:
+            print(f"❌ Direct connection failed: {str(e)}")
+            return False
+    
+    def _validate_cmc_page_load(self, url: str) -> bool:
+        """Validate that CMC page loaded successfully with proper validation for different page types"""
+        try:
+            current_url = self.driver.current_url
+            page_title = self.driver.title
+            page_source = self.driver.page_source.lower()
+            
+            print(f"🔍 Page validation: URL={current_url[:50]}..., Title={page_title[:30]}...")
+            
+            # Check for connection/proxy errors first
+            tunnel_errors = [
+                "err_tunnel_connection_failed", "err_proxy_connection_failed", 
+                "err_timed_out", "err_connection_timed_out", "err_connection_refused",
+                "err_address_unreachable", "502 bad gateway", "503 service unavailable",
+                "504 gateway timeout", "connection timed out", "this site can't be reached",
+                "took too long to respond", "proxy connection failed", "tunnel connection failed"
+            ]
+            
+            has_tunnel_error = any(error in page_source for error in tunnel_errors)
+            has_title_error = any(error in page_title.lower() for error in tunnel_errors)
+            
+            if has_tunnel_error or has_title_error:
+                print(f"❌ Connection error detected in page content")
+                return False
+            
+            # Content validation based on page type
+            url_success = "coinmarketcap.com" in current_url.lower()
+            page_loaded = current_url != "data:," and current_url != "about:blank"
+            
+            # Different validation for different page types
+            if "/community/" in url:
+                # Community page validation - FIXED
+                community_title_indicators = [
+                    "join the crypto message board", "community", "coinmarketcap"
+                ]
+                title_success = any(indicator in page_title.lower() for indicator in community_title_indicators)
+                
+                community_content_indicators = [
+                    "community", "message board", "crypto", "post", "coinmarketcap"
+                ]
+                content_found = sum(1 for indicator in community_content_indicators if indicator in page_source)
+                content_success = content_found >= 3
+                
+                print(f"📊 Community page validation: URL={url_success}, Title={title_success}, Content={content_success} ({content_found}/5 indicators), Loaded={page_loaded}")
+                
+            else:
+                # Regular CMC page validation
+                title_success = "coinmarketcap" in page_title.lower() and len(page_title) > 5
+                
+                cmc_content_indicators = [
+                    "coinmarketcap", "cryptocurrency", "bitcoin", "ethereum",
+                    "market cap", "price", "trading volume", "market data"
+                ]
+                content_found = sum(1 for indicator in cmc_content_indicators if indicator in page_source)
+                content_success = content_found >= 3
+                
+                print(f"📊 Regular page validation: URL={url_success}, Title={title_success}, Content={content_success} ({content_found}/8 indicators), Loaded={page_loaded}")
+            
+            # All criteria must pass
+            if url_success and title_success and content_success and page_loaded:
+                print(f"✅ Navigation successful")
+                return True
+            else:
+                failure_reasons = []
+                if not url_success: failure_reasons.append("Wrong URL")
+                if not title_success: failure_reasons.append("Invalid title") 
+                if not content_success: failure_reasons.append(f"Insufficient content ({content_found} indicators)")
+                if not page_loaded: failure_reasons.append("Page not loaded")
+                
+                print(f"❌ Navigation validation failed: {', '.join(failure_reasons)}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Page validation error: {str(e)}")
+            return False
+    
+    def _try_switch_proxy(self) -> bool:
+        """Try to switch proxy - only if proxy rotation is enabled"""
+        if not self.proxy_config.get('auto_proxy_rotation', True):
+            print("⚠️ Proxy switching disabled by user preference")
+            return False
+            
+        try:
+            # Try to switch to a new proxy using enterprise system
+            if hasattr(self.profile_manager, 'load_profile_with_enterprise_proxy'):
+                print("🗂️ Switching to new proxy via enterprise system...")
+                new_driver = self.profile_manager.load_profile_with_enterprise_proxy()
+                
+                if new_driver:
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    
+                    self.driver = new_driver
+                    
+                    if hasattr(self.driver, '_enterprise_proxy_configured') and self.driver._enterprise_proxy_configured:
+                        new_proxy = getattr(self.driver, '_enterprise_working_proxy', 'Unknown')
+                        print(f"✅ Switched to new proxy: {new_proxy}")
+                    else:
+                        print("⚠️ No new proxy available")
+                    
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Failed to switch proxy: {str(e)}")
+            return False
+
+ 

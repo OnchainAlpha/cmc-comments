@@ -1,0 +1,11 @@
+Onchain Bureau market making positions have been strategically placed at **$0.005** for accumulation and **$0.0057 (14% higher)** for distribution based on the following analysis:  
+
+KAI’s 27% drop reflects thin liquidity ($1.87M 24h volume, 0.356 turnover) amplifying market-wide risk-off sentiment (BTC dominance at 64.9%). The absence of strong support below $0.00527—35% under its 2025 high—creates a high-probability accumulation zone, while the 6.11% 7-day gain prior suggests profit-taking pressure. OCB’s liquidity provisioning at these levels mitigates cascading stops from $100k-$200k sell orders, a critical risk given KAI’s microcap ($5.26M) and whale sensitivity (1% holdings = ~$52.7K impact).  
+
+Our 14% spread between buy/sell tiers balances execution quality with volatility absorption, aligning with the altcoin season index (17/100) signaling capital rotation to BTC. By anchoring liquidity at $0.005—the local support test—OCB ensures institutional-grade depth during high-beta altcoin swings.  
+
+Does KAI’s stability now hinge on BTC dominance peaking, or will illiquidity gaps persist?.
+
+#crypto #trading #Bitcoin #institutional
+
+[THOUGHTS] Your take on these levels?

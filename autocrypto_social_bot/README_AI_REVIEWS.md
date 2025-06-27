@@ -2,12 +2,13 @@
 
 ## Overview
 
-This bot automatically generates AI-powered reviews for trending cryptocurrency tokens using CoinMarketCap's AI analysis feature.
+This bot automatically generates AI-powered reviews for trending cryptocurrency tokens using CoinMarketCap's AI analysis feature and enhances them using DeepSeek AI.
 
 ## Features
 
 - 🔍 Automatically finds trending tokens on CoinMarketCap
 - 🤖 Uses CMC's AI to generate comprehensive token reviews
+- 🧠 Enhances reviews using DeepSeek AI
 - 💾 Saves reviews as individual text files
 - 📊 Tracks all reviews in a CSV file for easy analysis
 
@@ -15,7 +16,8 @@ This bot automatically generates AI-powered reviews for trending cryptocurrency 
 
 1. **Finds Trending Tokens**: The bot navigates to CoinMarketCap and identifies the top trending cryptocurrencies
 2. **Generates AI Reviews**: For each token, it uses CMC's AI feature to generate a detailed analysis
-3. **Saves Reviews**: Each review is saved as:
+3. **Enhances Reviews**: Uses DeepSeek AI to enhance and personalize the reviews
+4. **Saves Reviews**: Each review is saved as:
    - Individual text file in `ai_reviews/` folder
    - Entry in `analysis_data/ai_reviews.csv` for tracking
 
@@ -26,7 +28,11 @@ This bot automatically generates AI-powered reviews for trending cryptocurrency 
    python autocrypto_social_bot/import_profile.py
    ```
 
-2. **Run the AI Review Bot**:
+2. **Set up DeepSeek API Key**:
+   - Get your API key from https://platform.deepseek.com/api-keys
+   - Add it to `config/config.json` or set as environment variable `DEEPSEEK_API_KEY`
+
+3. **Run the AI Review Bot**:
    ```bash
    python autocrypto_social_bot/main.py
    ```
@@ -71,6 +77,11 @@ You can modify these settings in `main.py`:
 - Make sure Chrome is fully closed before running
 - Check that undetected-chromedriver is properly installed
 - Try running `pip install --upgrade undetected-chromedriver`
+
+### DeepSeek API issues
+- Verify your API key is correctly set in config.json or environment
+- Check your API usage limits
+- Ensure you have a valid subscription
 
 ## Notes
 

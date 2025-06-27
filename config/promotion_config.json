@@ -1,0 +1,7 @@
+{
+    "type": "token_shilling",
+    "params": {
+        "promoted_ticker": "$GOONC",
+        "promoted_name": "GOONCOIN"
+    }
+}

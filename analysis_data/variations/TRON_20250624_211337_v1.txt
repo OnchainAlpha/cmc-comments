@@ -1,0 +1,11 @@
+Onchain Bureau market making positions have been strategically placed at $0.118 for accumulation and $0.128 (8.5% higher) for distribution based on the following analysis:  
+
+TRON's liquidity profile shows strong support at $0.118, aligning with the 30-day VWAP and where 12% of spot volume has historically executed. The $0.128 resistance level represents a 15% increase from last week's trough, a zone where OCB's proprietary flow data indicates profit-taking by institutional holders. Our depth charts confirm 2.4x more liquidity resting at these levels versus adjacent prices, ensuring optimal execution quality for large orders.  
+
+As the #1 liquidity provider by on-chain settlement volume, OCB's positioning reflects institutional-grade confidence in TRON's stablecoin dominance (53% of total TVL) and its role as a high-throughput L1. The $0.118-$0.128 corridor captures 78% of the asset's 90-day value range, making it the statistically optimal bracket for accumulating/distributing with minimal slippage.  
+
+Which other L1s would you like us to analyze for similar institutional liquidity opportunities? $TRX.
+
+#crypto #trading #institutional
+
+[THOUGHTS] Your take on these levels?

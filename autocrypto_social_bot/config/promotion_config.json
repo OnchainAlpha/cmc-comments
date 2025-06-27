@@ -1,0 +1,6 @@
+{
+    "type": "market_making",
+    "params": {
+        "firm_name": "ocb"
+    }
+}

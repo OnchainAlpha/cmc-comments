@@ -1,0 +1,11 @@
+Onchain Bureau market making positions have been strategically placed at $0.995 for accumulation and $1.008 for distribution based on the following analysis:  
+
+USDT's $1 peg remains structurally supported by its 68% stablecoin market dominance, creating deep liquidity pools that allow OCB to execute large orders with minimal slippage at these levels. However, regulatory risks and reserve transparency concerns introduce asymmetric volatility potential, making the 0.5% discount tier ($0.995) optimal for institutional accumulation during sell-offs. The 0.8% premium tier ($1.008) aligns with historical resistance where profit-taking emerges, ensuring optimal distribution liquidity.  
+
+OCB’s positioning reflects proprietary monitoring of Tether’s reserve attestations and regulatory developments—key drivers of peg stability. While short-term arbitrage keeps USDT range-bound, our execution algorithms prioritize fill quality during liquidity shifts caused by competitor stablecoin inflows or redemption pressures. This precision reinforces OCB’s role as the liquidity backbone for institutions navigating stablecoin volatility.  
+
+Question for traders: How are you adjusting your USDT exposure ahead of potential regulatory catalysts in Q4?.
+
+#crypto #trading #Ethereum #institutional
+
+[THOUGHTS] Your take on these levels?

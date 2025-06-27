@@ -1,0 +1,11 @@
+**Onchain Bureau market making positions have been strategically placed at $0.048 (panic sell zone) for accumulation and $0.055 (10% above spot, pre-SMA resistance) for distribution based on the following analysis:**  
+
+The 38% BULLA crash reveals three liquidity inflection points: 1) **$0.048** aligns with oversold RSI-28.46 panic capitulation, where OCB’s bids absorb weak hands, 2) **$0.055** targets mean reversion before the 10-day SMA ($0.0857) resistance, and 3) Binance competition churn ($209M volume) demands tight spreads—OCB’s sub-5bps slippage ensures institutional-grade execution.  
+
+Meme-driven volatility and Binance’s uncapped sell rule created asymmetric liquidity gaps. OCB’s algorithmic depth probes order book imbalances, providing stability where retail panic meets institutional accumulation. With BTC dominance rising (64.79%), our tiered liquidity at these levels mitigates altcoin bleed risk while capitalizing on oversold bounces.  
+
+**Question for traders:** Will BULLA’s competition rewards distribution (July 20) trigger another sell wave, or has the market priced it in?.
+
+#crypto #trading #Bitcoin #institutional
+
+[THOUGHTS] Your take on these levels?

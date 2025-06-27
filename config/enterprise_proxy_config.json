@@ -1,0 +1,181 @@
+{
+    "test_timeout": 20,
+    "max_workers": 10,
+    "min_success_rate": 0.05,
+    "test_with_cmc": true,
+    "enable_residential_apis": true,
+    "max_proxy_failures": 2,
+    "proxy_rotation_interval": 180,
+    "use_manual_proxies": true,
+    "emergency_mode": true,
+    "priority_testing": true,
+    "max_proxies_to_test": 200,
+    "proxy_apis": {
+        "scraperapi": {
+            "enabled": true,
+            "free": false,
+            "description": "Premium scraping API with automatic proxy rotation",
+            "signup_url": "https://scraperapi.com/",
+            "priority": 1
+        },
+        "proxykingdom": {
+            "enabled": true,
+            "free": false,
+            "description": "High-quality API (requires token)",
+            "signup_url": "https://proxykingdom.com/",
+            "priority": 2
+        },
+        "brightdata": {
+            "enabled": true,
+            "free": false,
+            "description": "Enterprise residential proxies",
+            "signup_url": "https://brightdata.com/",
+            "priority": 3
+        },
+        "getproxylist": {
+            "enabled": false,
+            "free": true,
+            "description": "Free API with HTTPS proxies (disabled for emergency mode)"
+        },
+        "proxyscrape_v4": {
+            "enabled": false,
+            "free": true,
+            "description": "ProxyScrape v4 API (disabled - too many blocks)"
+        }
+    },
+    "api_keys": {
+        "scraperapi_key": "",
+        "proxykingdom_token": "NzoUYf4M0UQcZt",
+        "brightdata_token": "",
+        "proxifly_key": "",
+        "comment": "PREMIUM: ProxyKingdom token configured for immediate use!"
+    },
+    "cmc_testing": {
+        "test_health_endpoint": true,
+        "test_trending_page": true,
+        "test_content_validation": true,
+        "min_score_threshold": 60,
+        "fallback_score_threshold": 40,
+        "aggressive_filtering": true
+    },
+    "quality_filters": {
+        "max_connect_time": 5,
+        "max_response_time": 8,
+        "min_uptime": 70,
+        "preferred_countries": ["US", "CA", "GB", "DE", "FR", "NL", "AU", "SG"],
+        "avoid_countries": ["CN", "RU", "KP", "IR", "VN", "BD"],
+        "residential_only": true,
+        "exclude_datacenter": true
+    },
+    "emergency_premium_sources": {
+        "webshare": "https://proxy.webshare.io/",
+        "smartproxy": "https://smartproxy.com/",
+        "oxylabs": "https://oxylabs.io/",
+        "shifter": "https://shifter.io/"
+    },
+    "proxy_acquisition_strategy": {
+        "description": "BlackRock-grade infrastructure requirements",
+        "priority_order": [
+            "premium_residential_api",
+            "datacenter_premium",
+            "rotating_residential",
+            "emergency_fallback"
+        ],
+        "minimum_success_rate": 85,
+        "required_proxy_count": 50,
+        "geographic_distribution": ["US", "EU", "APAC"],
+        "blacklist_management": true
+    },
+    "premium_sources": {
+        "smartproxy": {
+            "enabled": true,
+            "api_endpoint": "https://proxy.smartproxy.com/api/v1/endpoints",
+            "auth_required": true,
+            "success_rate_target": 95,
+            "cost_per_gb": 7.00,
+            "roi_analysis": "High conversion rate justifies premium cost"
+        },
+        "bright_data": {
+            "enabled": true,
+            "api_endpoint": "https://brightdata.com/api/v2/zone/residential/ips",
+            "auth_required": true,
+            "success_rate_target": 98,
+            "cost_per_gb": 15.00,
+            "roi_analysis": "Enterprise-grade reliability for institutional trading"
+        },
+        "proxy_mesh": {
+            "enabled": true,
+            "endpoint": "https://premium.proxymesh.com/api/endpoints",
+            "auth_required": true,
+            "success_rate_target": 90,
+            "cost_per_month": 199.00
+        }
+    },
+    "fallback_strategy": {
+        "datacenter_proxies": {
+            "enabled": true,
+            "sources": [
+                "proxyscrape_datacenter",
+                "proxylist_datacenter",
+                "custom_datacenter_pool"
+            ],
+            "minimum_speed": 1000,
+            "geographical_preference": ["US-East", "US-West", "EU-Central"]
+        },
+        "emergency_protocols": {
+            "direct_connection_timeout": 300,
+            "proxy_health_check_interval": 60,
+            "automatic_failover": true,
+            "escalation_threshold": 3
+        }
+    },
+    "performance_optimization": {
+        "concurrent_testing": {
+            "max_threads": 20,
+            "batch_size": 50,
+            "timeout_per_test": 10
+        },
+        "caching_strategy": {
+            "working_proxy_ttl": 3600,
+            "failed_proxy_blacklist_duration": 7200,
+            "performance_metrics_retention": 86400
+        },
+        "load_balancing": {
+            "algorithm": "weighted_round_robin",
+            "health_check_frequency": 300,
+            "failure_threshold": 3,
+            "recovery_check_interval": 600
+        }
+    },
+    "compliance_and_monitoring": {
+        "request_logging": true,
+        "performance_analytics": true,
+        "cost_tracking": true,
+        "sla_monitoring": {
+            "uptime_target": 99.5,
+            "response_time_target": 2000,
+            "success_rate_target": 95
+        }
+    },
+    "automation_optimization": {
+        "adaptive_delays": {
+            "base_delay": 45,
+            "success_multiplier": 0.8,
+            "failure_multiplier": 1.5,
+            "max_delay": 120,
+            "min_delay": 30
+        },
+        "batch_processing": {
+            "enabled": true,
+            "batch_size": 5,
+            "parallel_sessions": 3,
+            "session_rotation_interval": 1800
+        },
+        "risk_management": {
+            "ip_rotation_frequency": 10,
+            "user_agent_rotation": true,
+            "behavioral_randomization": true,
+            "anti_fingerprinting": true
+        }
+    }
+} 

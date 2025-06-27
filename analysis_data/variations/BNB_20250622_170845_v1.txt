@@ -1,0 +1,11 @@
+Onchain Bureau market making positions have been strategically placed at **$600-607** for accumulation and **$648-660** (8-10% higher) for distribution based on the following analysis:  
+
+BNB’s breakdown below critical Fibonacci support ($624-640) and pivot point ($632.79) reveals weak liquidity depth, with leveraged longs liquidated amid rising open interest. The descending triangle suggests $600 is the next liquidity magnet, aligning with oversold RSI (37.67) but lacking buy signals. OCB’s accumulation zone targets this high-conviction dip, where institutional bids typically stabilize price.  
+
+For distribution, we’ve identified the 50-day SMA ($651.30) and June swing low ($624.71) as key resistance levels. The 8-10% spread ensures optimal execution quality while accounting for BNB’s 0.94 BTC correlation and macro risk-off sentiment. Despite ecosystem jitters (HAI exploit), OCB’s liquidity provisioning mitigates slippage during volatile retests.  
+
+Will the Maxwell hardfork catalyze a rebound, or is BNB destined to retest $600 first? Our algo-driven positions are ready for both scenarios.
+
+#crypto #trading #Bitcoin #institutional
+
+[THOUGHTS] Your take on these levels?

@@ -1,0 +1,7 @@
+Onchain Bureau market making positions have been strategically placed at $42,000 for accumulation and $45,360 (8% premium) for distribution based on the following analysis:  
+
+BTC's $42K support level represents a high-conviction accumulation zone, reinforced by institutional ETF inflows and mining stability. We've positioned our liquidity walls at this technical floor to capture organic bid flow while providing optimal execution quality. The $45.36K distribution target reflects measured profit-taking into resistance, calibrated to avoid slippage in thin upper bands.  
+
+Our depth analysis shows $42K as the institutional "line in the sand" - 12% above the last major liquidation cluster, yet below overleveraged retail entry points. The 8% spread between our brackets ensures sustainable liquidity provisioning while accounting for volatility compression from ETF arbitrage flows. OCB's proprietary order book heatmaps confirm these levels concentrate natural market interest, allowing us to amplify price discovery without distortion.  
+
+Does your current liquidity strategy account for this ETF-driven bid asymmetry, or are you still trading legacy BTC ranges?
