@@ -13,6 +13,7 @@ import sys
 import os
 import time
 import json
+import re
 from typing import Optional, List, Dict
 from pathlib import Path
 from colorama import Fore, Style, init
@@ -128,30 +129,547 @@ def get_simplelogin_aliases() -> List[Dict]:
         print_error(f"Failed to get SimpleLogin aliases: {e}")
         return []
 
-def show_simplelogin_aliases():
-    """Display SimpleLogin aliases with usage status"""
-    print_header("📧 SimpleLogin Email Aliases")
+def extract_email_from_cmc_session(driver):
+    """Extract email from CMC user dropdown by clicking on avatar"""
+    try:
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException, NoSuchElementException
+        
+        # Wait for page to load completely
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)
+        
+        # Look for user avatar/dropdown element using multiple selectors
+        avatar_selectors = [
+            '[data-test="user-avatar-wrapper"]',
+            '.UserDropdown_user-avatar-wrapper__YEFUG',  
+            '.BasePopover_base__T5yOf .UserDropdown_user-avatar-wrapper__YEFUG',
+            'div[class*="UserDropdown"][class*="user-avatar-wrapper"]',
+            'div[class*="user-avatar"]',
+            'button[class*="user"] img',
+            'button[aria-label*="user"]',
+            'div[class*="profile"]',
+            'div[class*="avatar"]'
+        ]
+        
+        avatar_element = None
+        for selector in avatar_selectors:
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                for element in elements:
+                    if element.is_displayed() and element.is_enabled():
+                        avatar_element = element
+                        print(f"   Found avatar element: {selector}")
+                        break
+                if avatar_element:
+                    break
+            except Exception:
+                continue
+        
+        if not avatar_element:
+            # Fallback: try XPath selectors
+            xpath_selectors = [
+                "//div[contains(@class, 'user-avatar')]",
+                "//button[contains(@class, 'user')]",
+                "//div[contains(@data-test, 'user')]",
+                "//div[contains(@class, 'avatar')]",
+                "//svg[contains(@class, 'c-i')]/parent::div/parent::div",
+                "//img[contains(@src, 'avatar')]/parent::div"
+            ]
+            
+            for selector in xpath_selectors:
+                try:
+                    elements = driver.find_elements(By.XPATH, selector)
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            avatar_element = element
+                            print(f"   Found avatar element (XPath): {selector}")
+                            break
+                    if avatar_element:
+                        break
+                except Exception:
+                    continue
+        
+        if not avatar_element:
+            return None, "No avatar dropdown found with any selector"
+        
+        # Try to click the avatar element
+        try:
+            print("   Clicking avatar to open dropdown...")
+            # Scroll element into view first
+            driver.execute_script("arguments[0].scrollIntoView(true);", avatar_element)
+            time.sleep(1)
+            
+            # Try different click methods
+            click_success = False
+            click_methods = [
+                lambda: avatar_element.click(),
+                lambda: driver.execute_script("arguments[0].click();", avatar_element),
+                lambda: driver.execute_script("arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}));", avatar_element)
+            ]
+            
+            for i, click_method in enumerate(click_methods):
+                try:
+                    click_method()
+                    click_success = True
+                    print(f"   Click method {i+1} succeeded")
+                    break
+                except Exception as e:
+                    print(f"   Click method {i+1} failed: {e}")
+                    continue
+            
+            if not click_success:
+                return None, "Failed to click avatar element"
+            
+            time.sleep(3)  # Wait for dropdown to appear
+            
+        except Exception as e:
+            return None, f"Error clicking avatar: {str(e)}"
+        
+        # Look for email in the dropdown/popup content
+        print("   Looking for email in dropdown content...")
+        page_source = driver.page_source
+        
+        # Use regex to find SimpleLogin emails in the page
+        simplelogin_pattern = r'\b[A-Za-z0-9._%+-]+@(?:simplelogin\.com|aleeas\.com)\b'
+        emails_found = re.findall(simplelogin_pattern, page_source, re.IGNORECASE)
+        
+        if emails_found:
+            # Remove duplicates and return first unique email
+            unique_emails = list(set(emails_found))
+            return unique_emails[0], "success"
+        
+        # If no SimpleLogin email found, try general email pattern
+        general_email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        all_emails = re.findall(general_email_pattern, page_source, re.IGNORECASE)
+        
+        # Filter out common non-user emails
+        filtered_emails = [
+            email for email in all_emails 
+            if not any(domain in email.lower() for domain in [
+                'coinmarketcap.com', 'google.com', 'facebook.com', 
+                'twitter.com', 'support@', 'noreply@', 'no-reply@',
+                'help@', 'info@', 'admin@'
+            ])
+        ]
+        
+        if filtered_emails:
+            # Remove duplicates  
+            unique_emails = list(set(filtered_emails))
+            return unique_emails[0], "general_email_found"
+        
+        return None, "no_email_in_dropdown"
+        
+    except Exception as e:
+        return None, f"error_extracting_email: {str(e)}"
+
+def check_chrome_sessions_for_active_emails() -> Dict[str, Dict]:
+    """Check all Chrome profiles using proper login detection and email extraction"""
+    from autocrypto_social_bot.profiles.profile_manager import ProfileManager
+    from autocrypto_social_bot.cmc_login_detector import CMCLoginDetector
     
-    aliases = get_simplelogin_aliases()
+    print(f"{Fore.CYAN}🔍 Checking Chrome sessions for active logins...{Style.RESET_ALL}")
+    
+    profile_manager = ProfileManager()
+    login_detector = CMCLoginDetector(profile_manager)
+    profiles = [p for p in profile_manager.list_profiles(silent_mode=True) if p.startswith('cmc_profile_')]
+    
+    active_sessions = {}
+    total_profiles = len(profiles)
+    
+    for i, profile_name in enumerate(profiles, 1):
+        print(f"   Checking {profile_name} ({i}/{total_profiles})...")
+        
+        try:
+            # Load the profile
+            driver = profile_manager.load_profile(profile_name)
+            time.sleep(3)
+            
+            # Go to CMC main page
+            driver.get("https://coinmarketcap.com")
+            time.sleep(4)
+            
+            # Use the proper login detection system
+            login_status = login_detector.check_cmc_login_status(driver, profile_name)
+            
+            if login_status.get('logged_in', False):
+                # Logged in - try to extract email
+                print(f"   ✅ Profile {profile_name} is logged in, extracting email...")
+                
+                email, extraction_status = extract_email_from_cmc_session(driver)
+                
+                active_sessions[profile_name] = {
+                    'status': 'logged_in',
+                    'email': email,
+                    'extraction_method': extraction_status,
+                    'login_details': login_status,
+                    'checked': True
+                }
+                
+                if email:
+                    print(f"   ✅ Email extracted: {email}")
+                else:
+                    print(f"   🟡 Logged in but email extraction failed: {extraction_status}")
+            else:
+                # Not logged in
+                active_sessions[profile_name] = {
+                    'status': 'logged_out',
+                    'email': None,
+                    'login_details': login_status,
+                    'checked': True
+                }
+                print(f"   ❌ Profile {profile_name} is logged out")
+            
+            driver.quit()
+            
+        except Exception as e:
+            print(f"   ❌ Error checking {profile_name}: {str(e)[:50]}...")
+            active_sessions[profile_name] = {
+                'status': 'error',
+                'email': None,
+                'error': str(e),
+                'checked': True
+            }
+    
+    # Analyze the results
+    print(f"\n{Fore.CYAN}📊 SESSION ANALYSIS:{Style.RESET_ALL}")
+    
+    logged_in_sessions = {k: v for k, v in active_sessions.items() if v['status'] == 'logged_in'}
+    logged_out_sessions = {k: v for k, v in active_sessions.items() if v['status'] == 'logged_out'}
+    error_sessions = {k: v for k, v in active_sessions.items() if v['status'] == 'error'}
+    
+    print(f"   ✅ Logged in sessions: {len(logged_in_sessions)}")
+    print(f"   ❌ Logged out sessions: {len(logged_out_sessions)}")
+    print(f"   ⚠️ Error sessions: {len(error_sessions)}")
+    
+    # Get emails currently in use
+    emails_in_use = set()
+    for session in logged_in_sessions.values():
+        if session.get('email'):
+            emails_in_use.add(session['email'])
+    
+    print(f"   📧 Unique emails in use: {len(emails_in_use)}")
+    
+    if emails_in_use:
+        print(f"   Emails being used:")
+        for email in sorted(emails_in_use):
+            print(f"      • {email}")
+    
+    # Get available SimpleLogin emails
+    try:
+        config = SimpleLoginConfig()
+        if config.is_configured():
+            client = EnhancedSimpleLoginAPI(config.api_key)
+            all_aliases = []
+            page = 0
+            
+            while True:
+                result = client.get_aliases(page_id=page)
+                aliases = result.get('aliases', [])
+                if not aliases:
+                    break
+                all_aliases.extend(aliases)
+                if not result.get('more', False):
+                    break
+                page += 1
+            
+            # Find available emails (not currently in use)
+            available_emails = [
+                alias for alias in all_aliases 
+                if alias['email'] not in emails_in_use and alias.get('enabled', True)
+            ]
+            
+            print(f"\n{Fore.CYAN}📧 EMAIL AVAILABILITY:{Style.RESET_ALL}")
+            print(f"   Total SimpleLogin aliases: {len(all_aliases)}")
+            print(f"   Currently in use: {len(emails_in_use)}")
+            print(f"   Available for new sessions: {len(available_emails)}")
+            
+            # Offer optimization if there are unused sessions or available emails
+            if logged_out_sessions or available_emails:
+                handle_session_optimization(
+                    logged_out_sessions, 
+                    available_emails, 
+                    emails_in_use,
+                    active_sessions
+                )
+        else:
+            print(f"\n{Fore.YELLOW}⚠️ SimpleLogin not configured - cannot check email availability{Style.RESET_ALL}")
+            
+    except Exception as e:
+        print(f"\n{Fore.RED}❌ Error checking SimpleLogin emails: {e}{Style.RESET_ALL}")
+    
+    print(f"\n{Fore.GREEN}✅ Chrome session check completed!{Style.RESET_ALL}")
+    return active_sessions
+
+def handle_session_optimization(logged_out_sessions, available_emails, emails_in_use, all_sessions):
+    """Handle optimization of Chrome sessions vs available emails"""
+    
+    print(f"\n{Fore.CYAN}🎯 SESSION OPTIMIZATION OPPORTUNITY{Style.RESET_ALL}")
+    
+    # Show current situation
+    print(f"\n{Fore.CYAN}📊 CURRENT SITUATION:{Style.RESET_ALL}")
+    print(f"   Logged out sessions: {len(logged_out_sessions)}")
+    print(f"   Available emails: {len(available_emails)}")
+    print(f"   Emails in use: {len(emails_in_use)}")
+    
+    if logged_out_sessions:
+        print(f"\n{Fore.YELLOW}⚠️ LOGGED OUT SESSIONS:{Style.RESET_ALL}")
+        for profile in logged_out_sessions.keys():
+            print(f"      • {profile}")
+    
+    if available_emails:
+        print(f"\n{Fore.GREEN}✅ AVAILABLE EMAILS:{Style.RESET_ALL}")
+        for i, alias in enumerate(available_emails[:10], 1):  # Show first 10
+            forwards = alias.get('nb_forward', 0)
+            note = alias.get('note', 'No note')[:50]
+            print(f"   {i:2d}. {alias['email']}")
+            print(f"       Forwards: {forwards} | Note: {note}")
+        
+        if len(available_emails) > 10:
+            print(f"       ... and {len(available_emails) - 10} more")
+    
+    # Offer optimization options
+    print(f"\n{Fore.CYAN}🎯 OPTIMIZATION OPTIONS:{Style.RESET_ALL}")
+    
+    options = []
+    if logged_out_sessions and available_emails:
+        options.append("1. 🔄 Replace logged-out sessions with new sessions for available emails")
+        options.append("2. 🗑️ Delete only logged-out sessions (keep existing logged-in ones)")
+        options.append("3. ➕ Create new sessions for available emails (keep all existing)")
+        options.append("4. ⏭️ Skip optimization")
+    elif logged_out_sessions:
+        options.append("1. 🗑️ Delete logged-out sessions")
+        options.append("2. ⏭️ Skip")
+    elif available_emails:
+        options.append("1. ➕ Create new sessions for available emails")
+        options.append("2. ⏭️ Skip")
+    else:
+        print(f"   No optimization needed - all sessions are active")
+        return
+    
+    for option in options:
+        print(f"   {option}")
+    
+    choice = input(f"\n{Fore.YELLOW}Select option: {Style.RESET_ALL}").strip()
+    
+    if "replace" in options[int(choice)-1] if choice.isdigit() and 1 <= int(choice) <= len(options) else False:
+        replace_logged_out_with_new_sessions(logged_out_sessions, available_emails)
+    elif "Delete only" in options[int(choice)-1] if choice.isdigit() and 1 <= int(choice) <= len(options) else False:
+        delete_logged_out_sessions(list(logged_out_sessions.keys()))
+    elif "Create new sessions" in options[int(choice)-1] if choice.isdigit() and 1 <= int(choice) <= len(options) else False:
+        create_new_sessions_for_emails(available_emails)
+    elif choice == "1" and len(options) == 2 and "Delete" in options[0]:
+        delete_logged_out_sessions(list(logged_out_sessions.keys()))
+    elif choice == "1" and len(options) == 2 and "Create" in options[0]:
+        create_new_sessions_for_emails(available_emails)
+    else:
+        print(f"{Fore.BLUE}ℹ️ Skipping optimization{Style.RESET_ALL}")
+
+def replace_logged_out_with_new_sessions(logged_out_sessions, available_emails):
+    """Delete logged-out sessions and create new ones for available emails"""
+    print(f"\n{Fore.CYAN}🔄 REPLACING LOGGED-OUT SESSIONS{Style.RESET_ALL}")
+    
+    # Delete logged-out sessions first
+    print(f"🗑️ Deleting {len(logged_out_sessions)} logged-out sessions...")
+    delete_logged_out_sessions(list(logged_out_sessions.keys()))
+    
+    # Create new sessions for available emails
+    max_new_sessions = min(len(available_emails), len(logged_out_sessions))
+    emails_to_use = available_emails[:max_new_sessions]
+    
+    print(f"\n➕ Creating {len(emails_to_use)} new sessions...")
+    create_new_sessions_for_emails(emails_to_use)
+
+def create_new_sessions_for_emails(available_emails):
+    """Create new Chrome profiles for available emails"""
+    from autocrypto_social_bot.profiles.profile_manager import ProfileManager
+    
+    print(f"\n{Fore.CYAN}➕ CREATING NEW SESSIONS{Style.RESET_ALL}")
+    
+    profile_manager = ProfileManager()
+    
+    print(f"   Creating {len(available_emails)} new profiles...")
+    print(f"   You'll need to manually log in to each one using the specified email")
+    
+    created_profiles = []
+    
+    for i, alias in enumerate(available_emails, 1):
+        try:
+            # Get next profile number
+            next_num = profile_manager.get_next_profile_number()
+            profile_name = f'cmc_profile_{next_num}'
+            
+            print(f"\n   Creating {profile_name} for {alias['email']}...")
+            
+            # Create the profile (this will open Chrome for initial setup)
+            profile_manager.create_numbered_profile(next_num)
+            
+            created_profiles.append({
+                'profile': profile_name,
+                'email': alias['email'],
+                'note': alias.get('note', '')
+            })
+            
+            print_success(f"   ✅ Created {profile_name}")
+            
+        except Exception as e:
+            print_error(f"   ❌ Failed to create profile for {alias['email']}: {e}")
+    
+    if created_profiles:
+        print(f"\n{Fore.GREEN}🎉 Successfully created {len(created_profiles)} new profiles!{Style.RESET_ALL}")
+        print(f"\n{Fore.CYAN}📋 MANUAL LOGIN REQUIRED:{Style.RESET_ALL}")
+        print("   Each profile needs to be logged in manually:")
+        
+        for profile_info in created_profiles:
+            print(f"   • {profile_info['profile']} → {profile_info['email']}")
+        
+        print(f"\n{Fore.YELLOW}💡 TIP: You can now use Profile Management → Test Profile to log in to each one{Style.RESET_ALL}")
+
+def delete_logged_out_sessions(logged_out_profiles: List[str]):
+    """Delete logged-out profiles after confirmation"""
+    if not logged_out_profiles:
+        return
+        
+    print(f"\n{Fore.RED}🗑️ DELETE LOGGED-OUT SESSIONS{Style.RESET_ALL}")
+    print(f"   Sessions to delete: {len(logged_out_profiles)}")
+    
+    for profile in logged_out_profiles:
+        print(f"   • {profile}")
+    
+    confirm = input(f"\n{Fore.YELLOW}⚠️ This will permanently delete these sessions. Continue? (type 'DELETE'): {Style.RESET_ALL}").strip()
+    
+    if confirm == 'DELETE':
+        from autocrypto_social_bot.profiles.profile_manager import ProfileManager
+        profile_manager = ProfileManager()
+        
+        deleted_count = 0
+        for profile in logged_out_profiles:
+            try:
+                profile_path = profile_manager.get_profile_path(profile)
+                import shutil
+                shutil.rmtree(profile_path)
+                print_success(f"   ✅ Deleted: {profile}")
+                deleted_count += 1
+            except Exception as e:
+                print_error(f"   ❌ Failed to delete {profile}: {e}")
+        
+        print_success(f"Successfully deleted {deleted_count} sessions!")
+    else:
+        print_info("Session deletion cancelled")
+
+def get_simplelogin_aliases_with_chrome_status() -> List[Dict]:
+    """Get SimpleLogin aliases with real-time Chrome session status"""
+    if not SIMPLELOGIN_AVAILABLE:
+        print_error("SimpleLogin not available")
+        return []
+    
+    config = SimpleLoginConfig()
+    if not config.is_configured():
+        print_error("SimpleLogin not configured. Please run setup first.")
+        return []
+    
+    try:
+        # Get SimpleLogin aliases
+        client = EnhancedSimpleLoginAPI(config.api_key)
+        all_aliases = []
+        page = 0
+        
+        while True:
+            result = client.get_aliases(page_id=page)
+            aliases = result.get('aliases', [])
+            
+            if not aliases:
+                break
+            
+            all_aliases.extend(aliases)
+            
+            if not result.get('more', False):
+                break
+            
+            page += 1
+        
+        # Check active Chrome sessions
+        chrome_sessions = check_chrome_sessions_for_active_emails()
+        
+        # Create a map of active emails
+        active_emails = {}
+        for profile, session_info in chrome_sessions.items():
+            if session_info['email']:
+                active_emails[session_info['email']] = {
+                    'profile': profile,
+                    'status': session_info['status']
+                }
+        
+        # Enrich aliases with real-time status
+        for alias in all_aliases:
+            email = alias['email']
+            alias['forward_count'] = alias.get('nb_forward', 0)
+            alias['enabled'] = alias.get('enabled', True)
+            
+            if email in active_emails:
+                alias['chrome_status'] = 'active_in_chrome'
+                alias['chrome_profile'] = active_emails[email]['profile']
+                alias['in_use'] = True
+            else:
+                # Check if any Chrome session shows this email as logged in
+                logged_in_somewhere = any(
+                    session['status'] in ['logged_in', 'logged_in_unknown_email'] 
+                    for session in chrome_sessions.values()
+                )
+                
+                if logged_in_somewhere:
+                    alias['chrome_status'] = 'potentially_available'
+                else:
+                    alias['chrome_status'] = 'available'
+                alias['chrome_profile'] = None
+                alias['in_use'] = False
+        
+        return all_aliases
+        
+    except Exception as e:
+        print_error(f"Failed to get SimpleLogin aliases with Chrome status: {e}")
+        return []
+
+def show_simplelogin_aliases():
+    """Display SimpleLogin aliases with real-time Chrome session status"""
+    print_header("📧 SimpleLogin Email Aliases - Live Status")
+    
+    aliases = get_simplelogin_aliases_with_chrome_status()
     
     if not aliases:
         print_warning("No SimpleLogin aliases found")
         return
     
-    print(f"{Fore.CYAN}📊 ALIAS SUMMARY:{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}📊 REAL-TIME ALIAS STATUS:{Style.RESET_ALL}")
     print(f"   Total Aliases: {len(aliases)}")
     
-    used_count = sum(1 for a in aliases if a['in_use'])
-    available_count = len(aliases) - used_count
+    active_count = sum(1 for a in aliases if a.get('chrome_status') == 'active_in_chrome')
+    available_count = sum(1 for a in aliases if a.get('chrome_status') == 'available')
+    potential_count = sum(1 for a in aliases if a.get('chrome_status') == 'potentially_available')
     
-    print(f"   {Fore.GREEN}✅ Available: {available_count}{Style.RESET_ALL}")
-    print(f"   {Fore.YELLOW}🔴 In Use: {used_count}{Style.RESET_ALL}")
+    print(f"   🟢 Active in Chrome: {active_count}")
+    print(f"   ✅ Available: {available_count}")
+    print(f"   🟡 Potentially Available: {potential_count}")
     
-    print(f"\n{Fore.CYAN}📧 DETAILED ALIASES:{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}📧 DETAILED ALIASES WITH CHROME STATUS:{Style.RESET_ALL}")
     print("-" * 80)
     
     for i, alias in enumerate(aliases, 1):
-        status = "🔴 IN USE" if alias['in_use'] else "✅ AVAILABLE"
+        chrome_status = alias.get('chrome_status', 'unknown')
+        
+        if chrome_status == 'active_in_chrome':
+            status = f"🟢 ACTIVE IN CHROME ({alias.get('chrome_profile', 'unknown profile')})"
+        elif chrome_status == 'available':
+            status = "✅ AVAILABLE"
+        elif chrome_status == 'potentially_available':
+            status = "🟡 POTENTIALLY AVAILABLE"
+        else:
+            status = "❓ UNKNOWN"
+        
         enabled = "✅ ENABLED" if alias['enabled'] else "❌ DISABLED"
         forwards = alias['forward_count']
         
@@ -162,6 +680,11 @@ def show_simplelogin_aliases():
             print(f"    Note: {alias['note']}")
         
         print()
+    
+    print(f"\n{Fore.CYAN}💡 STATUS LEGEND:{Style.RESET_ALL}")
+    print("   🟢 ACTIVE IN CHROME = Currently logged into CMC in a Chrome profile")
+    print("   🟡 POTENTIALLY AVAILABLE = Chrome profiles exist but email unknown")  
+    print("   ✅ AVAILABLE = Not currently active, ready for use")
 
 def profile_management_menu():
     """Profile Management System"""
@@ -188,10 +711,11 @@ def profile_management_menu():
         print("2. ➕ Create New Profile")
         print("3. 🧪 Test Profile")
         print("4. 🗑️ Delete Profile")
-        print("5. 📧 View SimpleLogin Aliases")
-        print("6. 🔙 Back to Main Menu")
+        print("5. 📧 View SimpleLogin Aliases (Database)")
+        print("6. 🔍 Check Live Chrome Sessions")
+        print("7. 🔙 Back to Main Menu")
         
-        choice = input(f"\n{Fore.YELLOW}🎯 Select option (1-6): {Style.RESET_ALL}").strip()
+        choice = input(f"\n{Fore.YELLOW}🎯 Select option (1-7): {Style.RESET_ALL}").strip()
         
         if choice == '1':
             list_all_profiles(profile_manager)
@@ -202,12 +726,28 @@ def profile_management_menu():
         elif choice == '4':
             delete_profile(profile_manager)
         elif choice == '5':
-            show_simplelogin_aliases()
+            # Show database-based aliases (quick)
+            aliases = get_simplelogin_aliases()
+            if aliases:
+                print_header("📧 SimpleLogin Aliases (Database View)")
+                print(f"{Fore.CYAN}📊 QUICK SUMMARY:{Style.RESET_ALL}")
+                print(f"   Total Aliases: {len(aliases)}")
+                used_count = sum(1 for a in aliases if a.get('in_use', False))
+                available_count = len(aliases) - used_count
+                print(f"   Database In Use: {used_count}")
+                print(f"   Database Available: {available_count}")
+                print(f"\n{Fore.YELLOW}💡 This shows database status only.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Use option 6 for live Chrome session status.{Style.RESET_ALL}")
+            else:
+                print_warning("No SimpleLogin aliases found")
             input(f"\n{Fore.YELLOW}Press Enter to continue...{Style.RESET_ALL}")
         elif choice == '6':
+            show_simplelogin_aliases()
+            input(f"\n{Fore.YELLOW}Press Enter to continue...{Style.RESET_ALL}")
+        elif choice == '7':
             break
         else:
-            print_error("Invalid option. Please select 1-6.")
+            print_error("Invalid option. Please select 1-7.")
             time.sleep(1)
 
 def list_all_profiles(profile_manager):
